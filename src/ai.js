@@ -1,5 +1,6 @@
 // AI opponent using the browser's built-in LanguageModel Prompt API.
-// Falls back to a greedy heuristic when the API is unavailable.
+// Falls back to a trained TF.js neural agent when available, and then
+// to a greedy heuristic when neither is usable.
 
 import { getValidMoves, executeMove, PEASANT_COST, TOWER_COST } from './movement.js'
 import { getTerritoryForHex } from './territory.js'
@@ -7,6 +8,7 @@ import { computeIncome, computeUpkeep } from './economy.js'
 import { UNIT_DEFS } from './units.js'
 import { TERRAIN_LAND, TERRAIN_WATER, STRUCTURE_HUT, STRUCTURE_TOWER } from './constants.js'
 import { hexNeighborKeys } from './hex.js'
+import { getActiveNeuralAgent, runNeuralAgentTurn } from './ai-rl.js'
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -18,6 +20,16 @@ function isAIPlayer(state, playerId) {
 // Run a full AI turn: think, execute actions.
 // The caller is responsible for calling endTurn() afterwards.
 async function runAITurn(state) {
+  // 1. Try trained neural agent (from self-play training via localStorage)
+  const neuralAgent = getActiveNeuralAgent()
+  if (neuralAgent) {
+    appendToLog(state, 'Turn ' + (state.turn + 1) + ': ' +
+      state.players[state.activePlayer].name + ' [RL gen ' + neuralAgent.generation + ']')
+    runNeuralAgentTurn(state, neuralAgent)
+    return
+  }
+
+  // 2. Try browser LanguageModel Prompt API
   const api = (typeof LanguageModel !== 'undefined' && LanguageModel) ||
               (typeof window !== 'undefined' && window.LanguageModel)
   if (api) {
@@ -28,6 +40,8 @@ async function runAITurn(state) {
       console.warn('[AI] LanguageModel failed, falling back to greedy:', err)
     }
   }
+
+  // 3. Greedy heuristic fallback
   runGreedyTurn(state)
 }
 

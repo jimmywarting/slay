@@ -164,6 +164,37 @@
     #aiLog p {
       margin: 2px 0;
     }
+
+    /* Training panel */
+    #trainStatus {
+      font-size: 0.82rem;
+      color: #95a5a6;
+      margin-bottom: 6px;
+    }
+    #trainProgress {
+      font-size: 0.75rem;
+      color: #bdc3c7;
+      line-height: 1.7;
+      min-height: 36px;
+      margin-bottom: 8px;
+    }
+    #btnTrain {
+      background: #2980b9;
+      color: #fff;
+    }
+    #btnTrain:hover:not(:disabled) { background: #2471a3; }
+    #btnStopTrain {
+      background: #c0392b;
+      color: #fff;
+    }
+    #btnStopTrain:hover:not(:disabled) { background: #a93226; }
+    #btnResetTrain {
+      background: #34495e;
+      color: #bdc3c7;
+      font-size: 0.75rem;
+      padding: 6px 10px;
+    }
+    #btnResetTrain:hover:not(:disabled) { background: #2c3e50; }
   </style>
 </head>
 <body>
@@ -216,6 +247,21 @@
   </div>
 
   <div class="panel">
+    <div class="section-title">🧠 Train AI (TensorFlow.js)</div>
+    <div id="trainStatus">TensorFlow.js loading…</div>
+    <div id="trainProgress"></div>
+    <div class="btn-group">
+      <button id="btnTrain">▶ Start Training</button>
+      <button id="btnStopTrain">⏹ Stop</button>
+      <button id="btnResetTrain">✕ Reset Weights</button>
+    </div>
+    <p style="font-size:0.68rem;color:#7f8c8d;margin-top:8px;line-height:1.5">
+      6 neural agents self-play and evolve each generation.<br>
+      The best model is used as the game AI once trained.
+    </p>
+  </div>
+
+  <div class="panel">
     <div class="section-title">How to Play</div>
     <div class="key-desc">
       You are <strong>Olive</strong>. 🤖 <strong>Forest</strong> is the AI opponent.<br>
@@ -235,6 +281,7 @@
 
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 <script type="module" src="src/game.js"></script>
 
 </body>
