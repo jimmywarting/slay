@@ -126,9 +126,7 @@ function drawHexBase(state, hex) {
   const corners = hexCorners(cx, cy)
 
   // Fill color — every non-water hex is always owned by a player
-  let fillColor = PLAYER_HEX_COLORS[hex.owner % PLAYER_HEX_COLORS.length]
-  if (hex.terrain === TERRAIN_TREE) fillColor = darken(fillColor, 0.25)
-  else if (hex.terrain === TERRAIN_PALM) fillColor = darken(fillColor, 0.2)
+  const fillColor = PLAYER_HEX_COLORS[hex.owner % PLAYER_HEX_COLORS.length]
 
   ctx.beginPath()
   ctx.moveTo(corners[0].x, corners[0].y)
@@ -200,21 +198,6 @@ function drawUnitIcon(unit, cx, cy, size) {
   ctx.globalAlpha = unit.moved ? 0.4 : 1.0
   drawEmoji(def.symbol, cx, cy, size)
   ctx.globalAlpha = 1.0
-}
-
-// ── Colour helpers ────────────────────────────────────────────────────────────
-
-function darken(hexColor, amount) {
-  const c = parseHexColor(hexColor)
-  return 'rgb(' +
-    Math.round(c.r * (1 - amount)) + ',' +
-    Math.round(c.g * (1 - amount)) + ',' +
-    Math.round(c.b * (1 - amount)) + ')'
-}
-
-function parseHexColor(hex) {
-  const m = /^#([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
-  return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : { r: 128, g: 128, b: 128 }
 }
 
 // ── Territory helpers ─────────────────────────────────────────────────────────
