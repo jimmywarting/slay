@@ -155,8 +155,8 @@ function getHexDefenseStrength(state, targetKey) {
   function checkHex(h) {
     if (!h) return
     if (h.unit) maxDef = Math.max(maxDef, UNIT_DEFS[h.unit.level].strength)
-    if (h.structure === STRUCTURE_HUT) maxDef = Math.max(maxDef, 2)
-    if (h.structure === STRUCTURE_TOWER) maxDef = Math.max(maxDef, 3)
+    if (h.structure === STRUCTURE_HUT) maxDef = Math.max(maxDef, 1)
+    if (h.structure === STRUCTURE_TOWER) maxDef = Math.max(maxDef, 2)
   }
 
   checkHex(targetHex)
