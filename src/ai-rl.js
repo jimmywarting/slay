@@ -45,6 +45,7 @@ const R_REPOSITION       =  0.05
 const P_INVALID          = -0.1   // action cannot exist (no territory / unit slot)
 const P_CANT_AFFORD      = -0.15  // tried to buy/build without enough gold
 const P_NO_MOVE          = -0.05  // action exists but no valid target found
+const P_IDLE_TURN        = -0.3   // ended turn while units were idle or a buy was affordable
 
 const MAX_ACTIONS_PER_TURN = 25
 const MAX_TURNS_PER_GAME   = 200
@@ -484,6 +485,15 @@ function getUnmovedUnits (state, playerId) {
   return units
 }
 
+// Returns true when the active player still has idle units or can buy a peasant.
+// Used by both training paths to detect and penalise premature END_TURN choices.
+function _hasIdleOptions (state, player) {
+  if (getUnmovedUnits(state, player).length > 0) return true
+  return state.territories.some(function (t) {
+    return t.owner === player && t.bank >= PEASANT_COST
+  })
+}
+
 function createHeadlessState (numActivePlayers) {
   const players = []
   for (let p = 0; p < 6; p++) players.push({ id: p, name: 'A' + p, color: '#fff' })
@@ -527,7 +537,11 @@ function runAgentTurn (state, agent) {
   for (let step = 0; step < MAX_ACTIONS_PER_TURN; step++) {
     const features  = encodeState(state, player)
     const actionIdx = agent.selectAction(features)
-    if (actionIdx === ACT_END_TURN) break
+    if (actionIdx === ACT_END_TURN) {
+      // Penalise ending the turn early while units are idle or a purchase is affordable
+      if (_hasIdleOptions(state, player)) agent.fitness += P_IDLE_TURN
+      break
+    }
     const reward = executeActionRL(state, actionIdx)
     agent.fitness += reward
     // Auto-end if nothing left to do
@@ -555,11 +569,11 @@ function runSelfPlayGame (agents) {
   }
   // Win bonus (only active players compete)
   if (state.winner !== null && state.winner < numActive) agents[state.winner].fitness += R_WIN
-  // Per-hex ownership bonus (partial credit, active players only)
+  // Per-hex ownership bonus: primary fitness driver for territory control (active players only)
   for (const k in state.hexes) {
     const h = state.hexes[k]
     if (h.terrain !== TERRAIN_WATER && h.owner !== null && h.owner < numActive) {
-      agents[h.owner].fitness += 0.005
+      agents[h.owner].fitness += 0.1
     }
   }
   for (let i = 0; i < n; i++) agents[i].gamesPlayed++
@@ -581,7 +595,11 @@ function runSelfPlayGameWeights (agentWeights) {
     for (let step = 0; step < MAX_ACTIONS_PER_TURN; step++) {
       const features  = encodeState(state, player)
       const actionIdx = selectActionPure(weights, features)
-      if (actionIdx === ACT_END_TURN) break
+      if (actionIdx === ACT_END_TURN) {
+        // Penalise ending the turn early while units are idle or a purchase is affordable
+        if (_hasIdleOptions(state, player)) fitnessDeltas[player] += P_IDLE_TURN
+        break
+      }
       const reward = executeActionRL(state, actionIdx)
       fitnessDeltas[player] += reward
       const unmoved = getUnmovedUnits(state, player)
@@ -596,11 +614,11 @@ function runSelfPlayGameWeights (agentWeights) {
   }
   // Win bonus (only active players compete)
   if (state.winner !== null && state.winner < numActive) fitnessDeltas[state.winner] += R_WIN
-  // Per-hex ownership bonus (partial credit, active players only)
+  // Per-hex ownership bonus: primary fitness driver for territory control (active players only)
   for (const k in state.hexes) {
     const h = state.hexes[k]
     if (h.terrain !== TERRAIN_WATER && h.owner !== null && h.owner < numActive) {
-      fitnessDeltas[h.owner] += 0.005
+      fitnessDeltas[h.owner] += 0.1
     }
   }
   return fitnessDeltas
