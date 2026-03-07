@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slay – Turn-Based Strategy</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      background: #0f2030;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      color: #ecf0f1;
+    }
+
+    #gameCanvas {
+      flex: 1;
+      display: block;
+      cursor: default;
+    }
+
+    #sidebar {
+      width: 280px;
+      flex-shrink: 0;
+      background: #1a2b3c;
+      border-left: 2px solid #2c3e50;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      overflow-y: auto;
+    }
+
+    .panel {
+      padding: 14px 16px;
+      border-bottom: 1px solid #2c3e50;
+    }
+
+    .panel h2 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+      letter-spacing: 0.04em;
+    }
+
+    #playerName {
+      font-size: 1.25rem;
+      font-weight: 800;
+      display: block;
+    }
+
+    #turnNumber {
+      font-size: 0.85rem;
+      color: #95a5a6;
+    }
+
+    #territoryInfo {
+      font-size: 0.85rem;
+      line-height: 1.6;
+      color: #bdc3c7;
+      min-height: 60px;
+    }
+
+    #hexInfo {
+      font-size: 0.8rem;
+      line-height: 1.5;
+      color: #bdc3c7;
+      min-height: 28px;
+    }
+
+    #message {
+      font-size: 0.82rem;
+      color: #f39c12;
+      min-height: 18px;
+      line-height: 1.4;
+    }
+
+    .btn-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    button {
+      padding: 9px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    #btnEndTurn {
+      background: #27ae60;
+      color: #fff;
+    }
+    #btnEndTurn:hover:not(:disabled) { background: #229954; }
+
+    #btnUndo {
+      background: #e67e22;
+      color: #fff;
+    }
+    #btnUndo:hover:not(:disabled) { background: #ca6f1e; }
+
+    #btnBuyUnit {
+      background: #f39c12;
+      color: #fff;
+    }
+    #btnBuyUnit:hover:not(:disabled) { background: #d68910; }
+
+    #btnBuildTower {
+      background: #8e44ad;
+      color: #fff;
+    }
+    #btnBuildTower:hover:not(:disabled) { background: #7d3c98; }
+
+    .legend-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      color: #bdc3c7;
+    }
+    .legend-table th {
+      text-align: left;
+      padding: 3px 4px;
+      border-bottom: 1px solid #2c3e50;
+      color: #95a5a6;
+      font-weight: 600;
+    }
+    .legend-table td {
+      padding: 3px 4px;
+    }
+
+    .key-desc {
+      font-size: 0.75rem;
+      color: #7f8c8d;
+      line-height: 1.7;
+    }
+
+    .section-title {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #7f8c8d;
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="sidebar">
+
+  <div class="panel">
+    <span id="playerName">Loading…</span>
+    <span id="turnNumber"></span>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">Territory</div>
+    <div id="territoryInfo"><em>Click a hex to see territory info</em></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">Selected Hex</div>
+    <div id="hexInfo"></div>
+  </div>
+
+  <div class="panel">
+    <div id="message"></div>
+  </div>
+
+  <div class="panel">
+    <div class="btn-group">
+      <button id="btnBuyUnit">Buy Peasant (5g)</button>
+      <button id="btnBuildTower">Build Tower (10g)</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="btn-group">
+      <button id="btnEndTurn">End Turn ▶</button>
+      <button id="btnUndo">↩ Undo Turn</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">Units</div>
+    <div id="legend"></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">How to Play</div>
+    <div class="key-desc">
+      Click a unit to select it.<br>
+      Yellow hexes = valid moves.<br>
+      Click a yellow hex to move.<br>
+      Capture enemy land to expand.<br>
+      Merge same-level units to upgrade.<br>
+      P = Peasant, S = Spearman<br>
+      K = Knight, B = Baron<br>
+      🏠 = Hut (str 2) &nbsp; 🏰 = Tower (str 3)<br>
+      Strength must be <em>greater</em> to capture.<br>
+      Pay upkeep or units die (→ gravestones).
+    </div>
+  </div>
+
+</div>
+
+<!-- Load modules in dependency order (globals, no ES modules needed) -->
+<script src="src/hex.js"></script>
+<script src="src/map.js"></script>
+<script src="src/territory.js"></script>
+<script src="src/units.js"></script>
+<script src="src/economy.js"></script>
+<script src="src/combat.js"></script>
+<script src="src/movement.js"></script>
+<script src="src/turn-system.js"></script>
+<script src="src/renderer.js"></script>
+<script src="src/input.js"></script>
+<script src="src/game.js"></script>
+
+</body>
+</html>
