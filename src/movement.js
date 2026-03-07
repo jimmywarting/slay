@@ -92,8 +92,9 @@ function getValidMoves(state, unitHexKey) {
 }
 
 // Execute a unit move from fromKey to toKey (assumed valid).
-// Returns true if the move was a free reposition (unit.moved stays false),
-// false if it was an action (capture, merge, clear tree/palm) that consumes the turn.
+// Returns true if the resulting unit can still move (unit.moved is false),
+// false if the move consumed the turn (unit.moved is true).
+// Free repositions and merges of two unmoved units both return true.
 function executeMove(state, fromKey, toKey) {
   const fromHex = state.hexes[fromKey]
   const toHex = state.hexes[toKey]
@@ -104,9 +105,12 @@ function executeMove(state, fromKey, toKey) {
 
   if (!isCapture) {
     if (toHex.unit) {
-      // Merge — action
+      // Merge — the merged unit inherits the "has moved" state of both sources.
+      // If either source has already moved this turn, the result is also moved.
       const newLevel = mergedLevel(unit.level, toHex.unit.level)
-      toHex.unit = { level: newLevel, moved: true }
+      const mergedMoved = (unit.moved || false) || (toHex.unit.moved || false)
+      toHex.unit = { level: newLevel, moved: mergedMoved }
+      isFree = !mergedMoved
     } else if (toHex.terrain === TERRAIN_TREE || toHex.terrain === TERRAIN_PALM) {
       // Clear tree/palm — action
       toHex.terrain = TERRAIN_LAND
