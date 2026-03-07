@@ -10,12 +10,13 @@ var UNIT_DEFS = [
 ];
 
 // Can two units of given levels be merged together?
+// Merging is additive: the combined level must be ≤ 4 (Baron).
 function canMergeUnits(level1, level2) {
-  return level1 === level2 && level1 < 4
+  return level1 + level2 <= 4
 }
 
-// The resulting level when merging two equal-level units
+// The resulting level when merging two units (additive, capped at Baron)
 function mergedLevel(level1, level2) {
   if (!canMergeUnits(level1, level2)) return null
-  return level1 + 1
+  return level1 + level2
 }
