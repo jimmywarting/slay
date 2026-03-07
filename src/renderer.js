@@ -1,6 +1,6 @@
 // Renderer: draws the game map on an HTML Canvas element
 
-import { HEX_SIZE, hexToPixel, hexCorners } from './hex.js'
+import { HEX_SIZE, hexToPixel, hexCorners, hexNeighborKeys } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_TREE, TERRAIN_PALM, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
 import { UNIT_DEFS } from './units.js'
 
@@ -70,7 +70,7 @@ function render(state) {
   // Buy mode target highlight — only hexes in the selected territory
   if (state.mode === 'buy') {
     const buyTerritory = findTerritoryForHex(state, state.selectedHex)
-    const bkeys = buyTerritory ? buyTerritory.hexKeys : []
+    const bkeys = (buyTerritory && buyTerritory.owner === state.activePlayer) ? buyTerritory.hexKeys : []
     for (let bi = 0; bi < bkeys.length; bi++) {
       const bh = state.hexes[bkeys[bi]]
       if (!bh) continue
@@ -83,13 +83,21 @@ function render(state) {
   // Build tower mode target highlight — only hexes in the selected territory
   if (state.mode === 'build') {
     const buildTerritory = findTerritoryForHex(state, state.selectedHex)
-    const tkeys = buildTerritory ? buildTerritory.hexKeys : []
+    const tkeys = (buildTerritory && buildTerritory.owner === state.activePlayer) ? buildTerritory.hexKeys : []
     for (let ti = 0; ti < tkeys.length; ti++) {
       const th = state.hexes[tkeys[ti]]
       if (!th) continue
       if (th.terrain === TERRAIN_LAND && !th.unit && !th.structure) {
         drawOverlay(th, 'rgba(150,100,255,0.35)', 0)
       }
+    }
+  }
+
+  // Active territory border — drawn last so it appears on top of all highlights
+  if (state.selectedHex) {
+    const activeTerr = findTerritoryForHex(state, state.selectedHex)
+    if (activeTerr) {
+      drawTerritoryBorder(state.hexes, activeTerr, 'rgba(255,255,255,0.85)', 3)
     }
   }
 }
@@ -306,6 +314,68 @@ function darken(hexColor, amount) {
 function parseHexColor(hex) {
   const m = /^#([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
   return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : { r: 128, g: 128, b: 128 }
+}
+
+// ── Territory helpers ─────────────────────────────────────────────────────────
+
+// Find the territory object that contains the given hex key.
+function findTerritoryForHex(state, key) {
+  if (!key) return null
+  const ts = state.territories
+  for (let i = 0; i < ts.length; i++) {
+    if (ts[i].hexKeys.indexOf(key) !== -1) return ts[i]
+  }
+  return null
+}
+
+// Draw a solid border around a territory by stroking only the outer edges —
+// i.e. edges whose neighbour lies outside the territory.
+//
+// Direction-to-edge mapping for pointy-top hexes (corners numbered 0-5 at
+// angles -30°, 30°, 90°, 150°, 210°, 270°, matching hexCorners()):
+//   dir 0 E  → edge between corners 0 and 1
+//   dir 1 NE → edge between corners 5 and 0
+//   dir 2 NW → edge between corners 4 and 5
+//   dir 3 W  → edge between corners 3 and 4
+//   dir 4 SW → edge between corners 2 and 3
+//   dir 5 SE → edge between corners 1 and 2
+// Formula: direction d → corners (6-d)%6 and (7-d)%6
+function drawTerritoryBorder(hexes, territory, color, lineWidth) {
+  if (!territory || territory.hexKeys.length === 0) return
+
+  // Build a fast-lookup set of keys in this territory
+  const hexSet = {}
+  for (let i = 0; i < territory.hexKeys.length; i++) {
+    hexSet[territory.hexKeys[i]] = true
+  }
+
+  ctx.strokeStyle = color
+  ctx.lineWidth = lineWidth
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
+  for (let i = 0; i < territory.hexKeys.length; i++) {
+    const hex = hexes[territory.hexKeys[i]]
+    if (!hex) continue
+
+    const pos = hexToPixel(hex.q, hex.r)
+    const cx = pos.x + offsetX
+    const cy = pos.y + offsetY
+    const corners = hexCorners(cx, cy)
+    const nbrs = hexNeighborKeys(hex.q, hex.r)
+
+    for (let d = 0; d < 6; d++) {
+      if (!hexSet[nbrs[d]]) {
+        // This edge is on the outer border of the territory — draw it
+        const c1 = (6 - d) % 6
+        const c2 = (7 - d) % 6
+        ctx.beginPath()
+        ctx.moveTo(corners[c1].x, corners[c1].y)
+        ctx.lineTo(corners[c2].x, corners[c2].y)
+        ctx.stroke()
+      }
+    }
+  }
 }
 
 export { PLAYER_COLORS, PLAYER_HEX_COLORS, offsetX, offsetY, initRenderer, resizeCanvas, render }
