@@ -196,9 +196,12 @@ function placeStartingTerritories(hexes, numActivePlayers) {
   }
 
   // ── Step 7: assign bank and add terrain decorations ───────────────────────
-  // Only active players start with gold; inactive players have bank 0.
+  // Active players start with 3 gold + 1 per tile in the territory.
+  // Inactive players have no gold.
   for (let ti = 0; ti < territories.length; ti++) {
-    territories[ti].bank = territories[ti].owner < numActivePlayers ? 5 : 0
+    territories[ti].bank = territories[ti].owner < numActivePlayers
+      ? 3 + territories[ti].hexKeys.length
+      : 0
   }
 
   addRandomTerrain(hexes) // place trees/palms after huts so they don't cover them
