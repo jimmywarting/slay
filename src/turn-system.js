@@ -1,7 +1,7 @@
 // Turn system: start/end turn, gravestone aging, undo
 
 import { hexNeighborKeys } from './hex.js'
-import { TERRAIN_WATER, TERRAIN_PALM, TERRAIN_TREE, STRUCTURE_GRAVESTONE } from './constants.js'
+import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_PALM, TERRAIN_TREE, STRUCTURE_GRAVESTONE } from './constants.js'
 import { computeIncome, computeUpkeep, applyBankruptcy } from './economy.js'
 
 // Save a snapshot of the current game state for undo and reset unit moved flags
@@ -46,6 +46,9 @@ function endTurn(state) {
   // Age gravestones (may convert to tree or palm)
   ageGravestones(state)
 
+  // Spread trees and palms
+  spreadTrees(state)
+
   // Advance to next player
   state.activePlayer = (state.activePlayer + 1) % state.players.length
   state.turn++
@@ -76,6 +79,60 @@ function ageGravestones(state) {
       hex.structure = null
       hex.gravestoneAge = 0
     }
+  }
+}
+
+// Spread trees and palms: each tree/palm ages by 1 every endTurn; when age
+// reaches 2 it spreads to one random valid adjacent hex and resets to 0.
+// Trees spread to any adjacent empty unowned land hex.
+// Palms spread to any adjacent empty unowned land hex that is itself adjacent
+// to water (so new palms stay in the coastal zone).
+function spreadTrees(state) {
+  var hexes = state.hexes
+  // Snapshot the keys so newly-created tree hexes don't spread in the same pass
+  var keys = Object.keys(hexes)
+
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i]
+    var hex = hexes[k]
+    if (hex.terrain !== TERRAIN_TREE && hex.terrain !== TERRAIN_PALM) continue
+
+    if (!hex.treeAge) hex.treeAge = 0
+    hex.treeAge++
+    if (hex.treeAge < 2) continue
+    hex.treeAge = 0
+
+    // Collect valid spread candidates
+    var nbrKeys = hexNeighborKeys(hex.q, hex.r)
+    var candidates = []
+    for (var j = 0; j < nbrKeys.length; j++) {
+      var nk = nbrKeys[j]
+      var nh = hexes[nk]
+      if (!nh) continue
+      if (nh.terrain !== TERRAIN_LAND) continue
+      if (nh.owner !== null) continue
+      if (nh.unit) continue
+      if (nh.structure) continue
+
+      // Palms may only spread to hexes that are themselves adjacent to water
+      if (hex.terrain === TERRAIN_PALM) {
+        var nbrsOfTarget = hexNeighborKeys(nh.q, nh.r)
+        var targetNearWater = nbrsOfTarget.some(function (tk) {
+          var tn = hexes[tk]
+          return !tn || tn.terrain === TERRAIN_WATER
+        })
+        if (!targetNearWater) continue
+      }
+
+      candidates.push(nk)
+    }
+
+    if (candidates.length === 0) continue
+
+    // Pick one random candidate and plant a new tree/palm there
+    var pick = candidates[Math.floor(Math.random() * candidates.length)]
+    hexes[pick].terrain = hex.terrain
+    hexes[pick].treeAge = 0
   }
 }
 
