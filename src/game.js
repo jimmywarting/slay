@@ -2,7 +2,7 @@
 
 import { PLAYER_HEX_COLORS, initRenderer, resizeCanvas, render } from './renderer.js'
 import { generateHexMap, placeStartingTerritories } from './map.js'
-import { PEASANT_COST, TOWER_COST } from './movement.js'
+import { PEASANT_COST, TOWER_COST, getBuyPlacementHexes } from './movement.js'
 import { startTurn, endTurn, undoTurn } from './turn-system.js'
 import { initInput } from './input.js'
 import { getTerritoryForHex } from './territory.js'
@@ -167,11 +167,21 @@ function handleBuyUnit(state) {
     return
   }
 
-  // Enter buy mode: player clicks the hex to place the peasant
+  // Guard: make sure there is at least one valid placement hex
+  const placement = getBuyPlacementHexes(state, territory)
+  if (placement.ownHexes.length === 0 && placement.adjacentHexes.length === 0) {
+    setMessage(state, 'No valid hex to place a peasant — all adjacent hexes are defended.')
+    updateUI(state)
+    return
+  }
+
+  // Enter buy mode: player clicks a highlighted hex to place the peasant.
+  // Green = own land/gravestone, yellow-green = tree (gets cleared),
+  // orange = undefended adjacent hex (parachute drop).
   state.mode = 'buy'
   state.selectedHex = territory.hutHexKey
   state.validMoves = []
-  setMessage(state, 'Click an empty land hex in your territory to place the peasant.')
+  setMessage(state, 'Click a highlighted hex to place the peasant.')
   render(state)
   updateUI(state)
 }
@@ -263,7 +273,7 @@ function updateUI(state) {
     msgEl.textContent = '🏆 Game Over – ' + winnerName + ' wins!'
     msgEl.style.color = state.winner !== null ? state.players[state.winner].color : '#ecf0f1'
   } else if (state.mode === 'buy') {
-    msgEl.textContent = 'Click a green hex to place your peasant.'
+    msgEl.textContent = 'Click a highlighted hex to place your peasant (green = land, yellow = tree, orange = parachute).'
     msgEl.style.color = '#f39c12'
   } else if (state.mode === 'build') {
     msgEl.textContent = 'Click a purple-tinted hex to build a tower.'

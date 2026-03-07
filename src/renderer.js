@@ -3,7 +3,7 @@
 import { HEX_SIZE, hexToPixel, hexCorners, hexNeighborKeys } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_TREE, TERRAIN_PALM, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
 import { UNIT_DEFS } from './units.js'
-import { PEASANT_COST } from './movement.js'
+import { PEASANT_COST, getBuyPlacementHexes } from './movement.js'
 
 const PLAYER_COLORS     = ['#736c03', '#158a17', '#dbc447', '#02792f', '#ada740', '#94c655']
 const PLAYER_HEX_COLORS = ['#736c03', '#158a17', '#dbc447', '#02792f', '#ada740', '#94c655']
@@ -68,15 +68,22 @@ function render(state) {
     if (sh) drawOverlay(sh, 'rgba(255,255,255,0.5)', 2)
   }
 
-  // Buy mode target highlight — only hexes in the selected territory
+  // Buy mode target highlight — own-territory hexes (green / yellow-green for trees)
+  // and adjacent undefended hexes (orange = parachute drop)
   if (state.mode === 'buy') {
     const buyTerritory = findTerritoryForHex(state, state.selectedHex)
-    const bkeys = (buyTerritory && buyTerritory.owner === state.activePlayer) ? buyTerritory.hexKeys : []
-    for (let bi = 0; bi < bkeys.length; bi++) {
-      const bh = state.hexes[bkeys[bi]]
-      if (!bh) continue
-      if (bh.terrain === TERRAIN_LAND && !bh.unit && !bh.structure) {
-        drawOverlay(bh, 'rgba(0,220,100,0.35)', 0)
+    if (buyTerritory && buyTerritory.owner === state.activePlayer) {
+      const { ownHexes, adjacentHexes } = getBuyPlacementHexes(state, buyTerritory)
+      for (let bi = 0; bi < ownHexes.length; bi++) {
+        const bh = state.hexes[ownHexes[bi]]
+        if (!bh) continue
+        const isTree = bh.terrain === TERRAIN_TREE || bh.terrain === TERRAIN_PALM
+        // Yellow-green for tree/palm (will be cleared); green for plain land / gravestone
+        drawOverlay(bh, isTree ? 'rgba(180,220,0,0.45)' : 'rgba(0,220,100,0.35)', 0)
+      }
+      for (let ai = 0; ai < adjacentHexes.length; ai++) {
+        const ah = state.hexes[adjacentHexes[ai]]
+        if (ah) drawOverlay(ah, 'rgba(255,140,0,0.45)', 0)  // orange = parachute
       }
     }
   }

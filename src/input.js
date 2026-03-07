@@ -1,9 +1,9 @@
 // Input handling: mouse clicks on the canvas
 
 import { pixelToHex, hexKey } from './hex.js'
-import { TERRAIN_WATER, TERRAIN_LAND, STRUCTURE_TOWER } from './constants.js'
-import { getTerritoryForHex } from './territory.js'
-import { TOWER_COST, PEASANT_COST, getValidMoves, executeMove } from './movement.js'
+import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_TOWER } from './constants.js'
+import { getTerritoryForHex, recomputeTerritories } from './territory.js'
+import { TOWER_COST, PEASANT_COST, getBuyPlacementHexes, getValidMoves, executeMove } from './movement.js'
 import { render, offsetX, offsetY } from './renderer.js'
 
 let updateUI = null
@@ -31,21 +31,33 @@ function handleHexClick(state, key) {
 
   // ── Buy-mode: place a new peasant ──────────────────────────────────────────
   if (state.mode === 'buy') {
-    const bt = getTerritoryForHex(state, key)
-    if (bt && bt.owner === player &&
-        bt.bank >= PEASANT_COST &&
-        hex.terrain === TERRAIN_LAND &&
-        !hex.unit && !hex.structure) {
-      hex.unit = { level: 1, moved: false }
-      bt.bank -= PEASANT_COST
-      clearSelection(state)
-    } else {
-      state.mode = 'normal'
-      state.validMoves = []
-      state.freeMoves = {}
-      render(state)
-      updateUI(state)
+    // The paying territory was recorded in state.selectedHex when entering buy mode
+    const buyTerritory = getTerritoryForHex(state, state.selectedHex)
+
+    if (buyTerritory && buyTerritory.owner === player && buyTerritory.bank >= PEASANT_COST) {
+      const { ownHexes, adjacentHexes } = getBuyPlacementHexes(state, buyTerritory)
+      const isOwnTarget      = ownHexes.indexOf(key) !== -1
+      const isAdjacentTarget = adjacentHexes.indexOf(key) !== -1
+
+      if (isOwnTarget || isAdjacentTarget) {
+        const isCapture = hex.owner !== player
+        // Clear tree/palm or gravestone on destination
+        if (hex.terrain === TERRAIN_TREE || hex.terrain === TERRAIN_PALM) hex.terrain = TERRAIN_LAND
+        hex.structure = null
+        if (isCapture) hex.owner = player
+        // Parachuted-in peasant has used its move; own-territory peasant is fresh
+        hex.unit = { level: 1, moved: isCapture }
+        buyTerritory.bank -= PEASANT_COST
+        if (isCapture) recomputeTerritories(state)
+      }
     }
+
+    // Always leave buy mode after any click and re-render once
+    state.mode = 'normal'
+    state.selectedHex = null
+    state.selectedUnit = null
+    state.validMoves = []
+    state.freeMoves = {}
     render(state)
     updateUI(state)
     return

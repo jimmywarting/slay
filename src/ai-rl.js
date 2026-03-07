@@ -6,7 +6,7 @@
 // Training:     neuroevolution (no gradient descent) — selection + Gaussian mutation
 // Actions:      24 fixed types; invalid attempts are penalised as reward signals
 
-import { getValidMoves, executeMove, PEASANT_COST, TOWER_COST } from './movement.js'
+import { getValidMoves, executeMove, PEASANT_COST, TOWER_COST, buyUnit } from './movement.js'
 import { computeIncome, computeUpkeep } from './economy.js'
 import {
   TERRAIN_WATER, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER
@@ -331,15 +331,10 @@ function executeActionRL (state, actionIdx) {
     const terr = myTerrs[actionIdx - ACT_BUY_BASE]
     if (!terr)              return P_INVALID
     if (terr.bank < PEASANT_COST) return P_CANT_AFFORD
-    for (let ki = 0; ki < terr.hexKeys.length; ki++) {
-      const h = state.hexes[terr.hexKeys[ki]]
-      if (h && h.terrain === TERRAIN_LAND && !h.unit && !h.structure) {
-        h.unit = { level: 1, moved: false }
-        terr.bank -= PEASANT_COST
-        return R_BUY_UNIT
-      }
-    }
-    return P_NO_MOVE  // no empty hex
+    // Find territory index and delegate to buyUnit() which handles tree/parachute placement
+    const terrIdx = state.territories.indexOf(terr)
+    if (buyUnit(state, terrIdx)) return R_BUY_UNIT
+    return P_NO_MOVE  // no valid placement hex
   }
 
   // ── 4-6: BUILD TOWER ──
