@@ -3,6 +3,7 @@
 import { HEX_SIZE, hexToPixel, hexCorners, hexNeighborKeys } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_TREE, TERRAIN_PALM, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
 import { UNIT_DEFS } from './units.js'
+import { PEASANT_COST } from './movement.js'
 
 const PLAYER_COLORS     = ['#736c03', '#158a17', '#dbc447', '#02792f', '#ada740', '#94c655']
 const PLAYER_HEX_COLORS = ['#736c03', '#158a17', '#dbc447', '#02792f', '#ada740', '#94c655']
@@ -41,7 +42,7 @@ function render(state) {
   const keys = Object.keys(state.hexes)
   for (let i = 0; i < keys.length; i++) {
     const hex = state.hexes[keys[i]]
-    if (hex.terrain !== TERRAIN_WATER) drawHexBase(state, hex)
+    if (hex.terrain !== TERRAIN_WATER) drawHexBase(state, hex, keys[i])
   }
   // Draw water on top for correct overlap at edges
   for (let j = 0; j < keys.length; j++) {
@@ -119,7 +120,7 @@ function drawWaterHex(hex) {
   ctx.stroke()
 }
 
-function drawHexBase(state, hex) {
+function drawHexBase(state, hex, hexKey) {
   const pos = hexToPixel(hex.q, hex.r)
   const cx = pos.x + offsetX
   const cy = pos.y + offsetY
@@ -139,10 +140,10 @@ function drawHexBase(state, hex) {
   ctx.stroke()
 
   // Content (terrain icon, structure, unit)
-  drawHexContent(state, hex, cx, cy)
+  drawHexContent(state, hex, hexKey, cx, cy)
 }
 
-function drawHexContent(state, hex, cx, cy) {
+function drawHexContent(state, hex, hexKey, cx, cy) {
   const emojiSize = Math.round(HEX_SIZE * 0.82)
 
   if (hex.terrain === TERRAIN_TREE) {
@@ -153,6 +154,14 @@ function drawHexContent(state, hex, cx, cy) {
 
   if (hex.structure === STRUCTURE_HUT) {
     drawEmoji('🛖', cx, cy, emojiSize)
+    // Show 🚩 on the active player's hut when the territory can afford a new Peasant
+    if (hex.owner === state.activePlayer) {
+      const territory = findTerritoryForHex(state, hexKey)
+      if (territory && territory.bank >= PEASANT_COST) {
+        const flagSize = Math.round(HEX_SIZE * 0.45)
+        drawEmoji('🚩', cx + HEX_SIZE * 0.32, cy - HEX_SIZE * 0.38, flagSize)
+      }
+    }
   } else if (hex.structure === STRUCTURE_TOWER) {
     drawEmoji('🏰', cx, cy, emojiSize)
   } else if (hex.structure === STRUCTURE_GRAVESTONE) {
