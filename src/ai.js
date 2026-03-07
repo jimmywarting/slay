@@ -5,7 +5,8 @@ import { getValidMoves, executeMove, PEASANT_COST, TOWER_COST } from './movement
 import { getTerritoryForHex } from './territory.js'
 import { computeIncome, computeUpkeep } from './economy.js'
 import { UNIT_DEFS } from './units.js'
-import { TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER } from './constants.js'
+import { TERRAIN_LAND, TERRAIN_WATER, STRUCTURE_HUT, STRUCTURE_TOWER } from './constants.js'
+import { hexNeighborKeys } from './hex.js'
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ function appendToLog(state, entry) {
 // ── LanguageModel-based turn ──────────────────────────────────────────────────
 
 const GAME_RULES_SYSTEM_PROMPT =
-  'You are an AI player in a turn-based hex strategy game called Slay.\n' +
+  'You are an AI player in a turn-based hex strategy game called Slay. YOUR GOAL IS TO WIN by controlling all land hexes.\n' +
   '\n' +
   'GAME RULES:\n' +
   '- The map is a hexagonal grid. Each hex has axial coordinates "q,r".\n' +
@@ -72,18 +73,21 @@ const GAME_RULES_SYSTEM_PROMPT =
   '\n' +
   'TOWERS: cost 10g, defend strength 2 on adjacent hexes, cannot move.\n' +
   '\n' +
-  'STRATEGY TIPS:\n' +
-  '  - Expand to claim more land (more income).\n' +
-  '  - Attack enemy huts to split and bankrupt them.\n' +
-  '  - Keep an eye on upkeep – too many expensive units = bankruptcy.\n' +
-  '  - Towers cheaply protect key chokepoints.\n' +
-  '  - Merging creates strong attackers without paying full cost.\n' +
-  '  - Neutrals (inactive players) can be captured for free land.\n' +
+  'WINNING STRATEGY (follow this order of priorities):\n' +
+  '  1. EXPAND FIRST – grab neutral territory hexes every turn; more land = more income.\n' +
+  '  2. BUY UNITS – buy peasants aggressively when you can afford them; place them on border hexes.\n' +
+  '  3. MERGE FOR POWER – merge two Peasants into a Spearman to break through enemy defences.\n' +
+  '  4. ATTACK ENEMY HUTS – capturing a hut splits the enemy territory and often bankrupts it.\n' +
+  '  5. ELIMINATE THREATS – target the player with the most land and income first.\n' +
+  '  6. DEFEND WITH TOWERS – build a tower on a border hex when income is healthy and gold is spare.\n' +
+  '  7. AVOID BANKRUPTCY – never let upkeep exceed income unless you have many saved gold.\n' +
   '\n' +
   'OUTPUT RULES:\n' +
   '  - Output ONLY valid JSON matching the schema. No markdown, no extra text.\n' +
   '  - Only use hex keys that appear in the state description below.\n' +
-  '  - Always include "end_turn" as the last action.'
+  '  - Always include "end_turn" as the last action.\n' +
+  '  - Always buy at least one unit if you can afford it and have empty land.\n' +
+  '  - Always reposition units toward the border if they cannot yet capture.'
 
 async function runLLMTurn(state, api) {
   const session = await api.create()
@@ -386,107 +390,261 @@ function executeAIAction(state, action) {
 }
 
 // ── Greedy fallback ───────────────────────────────────────────────────────────
+// A multi-phase strategy: buy units at the frontier, then execute the globally
+// best available move each step (captures > merges > expansions > repositions),
+// and finally build towers on contested borders with spare gold.
+
+// Minimum move score to act (prevents pointless low-value repositions)
+const MIN_MOVE_SCORE = 5
+// Maximum unit level (Baron = 4)
+const MAX_UNIT_LEVEL = 4
 
 function runGreedyTurn(state) {
   const player = state.activePlayer
+  greedyBuyUnits(state, player)
+  greedyMoveUnits(state, player)
+  greedyBuildTowers(state, player)
+}
 
-  // Collect all unmoved units
-  const unitKeys = []
-  for (const k in state.hexes) {
-    const h = state.hexes[k]
-    if (h.unit && h.owner === player && !h.unit.moved) {
-      unitKeys.push(k)
-    }
-  }
+// ── Buy phase ─────────────────────────────────────────────────────────────────
 
-  for (let ui = 0; ui < unitKeys.length; ui++) {
-    const fromKey = unitKeys[ui]
-    const fromHex = state.hexes[fromKey]
-    if (!fromHex || !fromHex.unit || fromHex.unit.moved) continue
+function greedyBuyUnits(state, player) {
+  // Keep buying as long as affordable and won't immediately bankrupt the territory.
+  // Iterate repeatedly so multiple units can be bought per turn.
+  let bought = true
+  while (bought) {
+    bought = false
+    for (let ti = 0; ti < state.territories.length; ti++) {
+      const t = state.territories[ti]
+      if (t.owner !== player || t.bank < PEASANT_COST) continue
 
-    const vm = getValidMoves(state, fromKey)
-    if (vm.moves.length === 0) continue
+      const income = computeIncome(state, t)
+      const upkeep = computeUpkeep(state, t)
+      const netAfterBuy = income - (upkeep + 2) // 2 = peasant upkeep per turn
+      const bankAfterBuy = t.bank - PEASANT_COST
 
-    // Priority: capture enemy hut > capture any enemy > free move toward enemy
-    const hutCaptures = []
-    const otherCaptures = []
-    const freeMoves = []
+      // Buy if: net income stays non-negative after the purchase,
+      // OR the saved gold covers at least 3 turns of the resulting deficit.
+      const sustainable = netAfterBuy >= 0
+      const deficit = Math.abs(Math.min(0, netAfterBuy))
+      const hasRunway = bankAfterBuy >= deficit * 3
+      if (!sustainable && !hasRunway) continue
 
-    for (let mi = 0; mi < vm.moves.length; mi++) {
-      const mk = vm.moves[mi]
-      const mh = state.hexes[mk]
-      if (!mh) continue
-      if (mh.owner !== player) {
-        if (mh.structure === STRUCTURE_HUT) {
-          hutCaptures.push(mk)
-        } else {
-          otherCaptures.push(mk)
-        }
-      } else if (vm.freeSet[mk]) {
-        freeMoves.push(mk)
-      }
-    }
+      // Place the unit on the frontier hex closest to enemy/neutral territory.
+      const placeKey = findFrontierPlacement(state, t, player)
+      if (!placeKey) continue
 
-    let chosen = null
-    if (hutCaptures.length > 0) {
-      chosen = hutCaptures[0]
-    } else if (otherCaptures.length > 0) {
-      chosen = otherCaptures[0]
-    } else if (freeMoves.length > 0) {
-      chosen = pickMoveTowardEnemy(state, freeMoves, player)
-    }
-
-    if (chosen) {
-      executeMove(state, fromKey, chosen)
-    }
-  }
-
-  // Buy peasants when sustainably affordable
-  for (let ti = 0; ti < state.territories.length; ti++) {
-    const t = state.territories[ti]
-    if (t.owner !== player || t.bank < PEASANT_COST) continue
-
-    const income = computeIncome(state, t)
-    const upkeep = computeUpkeep(state, t)
-    // Only buy if net income can sustain the new unit's upkeep, or we have spare gold
-    if (income - (upkeep + 2) >= 0 || t.bank >= PEASANT_COST * 2) {
-      for (let j = 0; j < t.hexKeys.length; j++) {
-        const k = t.hexKeys[j]
-        const h = state.hexes[k]
-        if (h && h.terrain === TERRAIN_LAND && !h.unit && !h.structure) {
-          h.unit = { level: 1, moved: false }
-          t.bank -= PEASANT_COST
-          break
-        }
-      }
+      state.hexes[placeKey].unit = { level: 1, moved: false }
+      t.bank -= PEASANT_COST
+      appendToLog(state, 'Turn ' + (state.turn + 1) + ': ' +
+        state.players[player].name + ' bought a Peasant at ' + placeKey)
+      bought = true
+      break // restart outer loop — income/upkeep changed
     }
   }
 }
 
-// Among candidate hex keys, pick the one closest to any active enemy hex.
-function pickMoveTowardEnemy(state, candidates, player) {
-  let bestKey = candidates[0]
-  let bestDist = Infinity
+// Find the best empty land hex in a territory for placing a new unit.
+// Prefers hexes that are on or near the border (adjacent to non-owned hexes).
+function findFrontierPlacement(state, territory, player) {
+  let bestKey = null
+  let bestScore = -Infinity
 
-  for (let ci = 0; ci < candidates.length; ci++) {
-    const h = state.hexes[candidates[ci]]
-    if (!h) continue
-    let minDist = Infinity
-    for (const ek in state.hexes) {
-      const eh = state.hexes[ek]
-      if (!eh || eh.owner === null || eh.owner === player ||
-          eh.owner >= state.numActivePlayers) continue
-      const dq = h.q - eh.q
-      const dr = h.r - eh.r
-      const dist = (Math.abs(dq) + Math.abs(dq + dr) + Math.abs(dr)) / 2
-      if (dist < minDist) minDist = dist
+  for (let i = 0; i < territory.hexKeys.length; i++) {
+    const k = territory.hexKeys[i]
+    const h = state.hexes[k]
+    if (!h || h.terrain !== TERRAIN_LAND || h.unit || h.structure) continue
+
+    // Count how many adjacent hexes are non-owned (border neighbours).
+    const nbrs = hexNeighborKeys(h.q, h.r)
+    let borderScore = 0
+    for (let j = 0; j < nbrs.length; j++) {
+      const nh = state.hexes[nbrs[j]]
+      if (!nh || nh.terrain === TERRAIN_WATER) continue
+      if (nh.owner !== player) {
+        // Active enemy counts double (more urgent frontier)
+        borderScore += (nh.owner !== null && nh.owner < state.numActivePlayers) ? 2 : 1
+      }
     }
-    if (minDist < bestDist) {
-      bestDist = minDist
-      bestKey = candidates[ci]
+    if (borderScore > bestScore) {
+      bestScore = borderScore
+      bestKey = k
     }
   }
   return bestKey
+}
+
+// ── Move phase ────────────────────────────────────────────────────────────────
+
+// On each iteration pick the globally highest-scored move and execute it.
+// Repeat until no move scores above the minimum threshold.
+function greedyMoveUnits(state, player) {
+  const MAX_ITERS = 80 // safety cap
+  for (let iter = 0; iter < MAX_ITERS; iter++) {
+    let bestScore = MIN_MOVE_SCORE
+    let bestFrom = null
+    let bestTo = null
+
+    for (const fromKey in state.hexes) {
+      const fromHex = state.hexes[fromKey]
+      if (!fromHex.unit || fromHex.owner !== player || fromHex.unit.moved) continue
+
+      const vm = getValidMoves(state, fromKey)
+      for (let mi = 0; mi < vm.moves.length; mi++) {
+        const toKey = vm.moves[mi]
+        const score = scoreMoveGreedy(state, fromKey, toKey, vm, player)
+        if (score > bestScore) {
+          bestScore = score
+          bestFrom = fromKey
+          bestTo = toKey
+        }
+      }
+    }
+
+    if (!bestFrom) break // no useful move found
+    // Capture the pre-move destination state to determine action type for logging
+    const preToHex = state.hexes[bestTo]
+    const wasMerge = preToHex && preToHex.owner === player && !!preToHex.unit
+    const wasCapture = preToHex && preToHex.owner !== player
+    executeMove(state, bestFrom, bestTo)
+    const destHex = state.hexes[bestTo]
+    const unitLevel = destHex && destHex.unit ? destHex.unit.level : 1
+    const action = wasCapture ? 'captured' : wasMerge ? 'merged →' : 'repositioned'
+    appendToLog(state, 'Turn ' + (state.turn + 1) + ': ' +
+      state.players[player].name + ' ' + action + ' ' +
+      UNIT_DEFS[unitLevel].name + ' → ' + bestTo)
+  }
+}
+
+// Assign a numeric desirability score to a candidate move.
+// Higher score = more desirable. Captures are always preferred over repositions.
+function scoreMoveGreedy(state, fromKey, toKey, vm, player) {
+  const fromHex = state.hexes[fromKey]
+  const toHex = state.hexes[toKey]
+  if (!fromHex || !toHex || !fromHex.unit) return 0
+
+  const attackerLevel = fromHex.unit.level
+  const isOwnHex = toHex.owner === player
+  const isActiveEnemy = toHex.owner !== null && toHex.owner !== player &&
+                        toHex.owner < state.numActivePlayers
+  const isNeutral = !isActiveEnemy && toHex.owner !== player
+  const isFree = !!vm.freeSet[toKey]
+  const isMerge = isOwnHex && !!toHex.unit
+
+  // ── Capture enemy hut → splits + often bankrupts their territory ──
+  if (isActiveEnemy && toHex.structure === STRUCTURE_HUT) {
+    const enemyTerr = getTerritoryForHex(state, toKey)
+    return 10000 + (enemyTerr ? enemyTerr.hexKeys.length * 5 : 0)
+  }
+
+  // ── Take enemy's last hex (eliminates them) ──
+  if (isActiveEnemy) {
+    const enemyTerr = getTerritoryForHex(state, toKey)
+    if (enemyTerr && enemyTerr.hexKeys.length === 1) return 9500
+  }
+
+  // ── Capture enemy hex adjacent to their hut (isolate HQ) ──
+  if (isActiveEnemy) {
+    const enemyTerr = getTerritoryForHex(state, toKey)
+    const hutKey = enemyTerr ? enemyTerr.hutHexKey : null
+    if (hutKey) {
+      const hutHex = state.hexes[hutKey]
+      const dist = hutHex ? hexDist(toHex.q, toHex.r, hutHex.q, hutHex.r) : 5
+      return 2000 + Math.max(0, 5 - dist) * 200
+    }
+    return 600
+  }
+
+  // ── Capture neutral hut (gains a new income-producing territory) ──
+  if (isNeutral && toHex.structure === STRUCTURE_HUT) return 1500
+
+  // ── Capture neutral hex (expand land = more income) ──
+  if (isNeutral) return 300
+
+  // ── Merge two units → creates a stronger attacker ──
+  if (isMerge) {
+    const resultLevel = attackerLevel + toHex.unit.level
+    if (resultLevel > MAX_UNIT_LEVEL) return 0
+    // Extra value when the merged unit can break a defended position
+    return 400 + resultLevel * 120
+  }
+
+  // ── Free reposition: only worthwhile if it moves toward the frontier ──
+  if (isFree) {
+    const distBefore = distToNearestTarget(state, fromHex.q, fromHex.r, player)
+    const distAfter = distToNearestTarget(state, toHex.q, toHex.r, player)
+    const improvement = distBefore - distAfter
+    if (improvement > 0) return 15 + improvement * 10
+    return 0 // don't reposition away from frontier
+  }
+
+  return 0
+}
+
+// ── Tower-build phase ─────────────────────────────────────────────────────────
+
+function greedyBuildTowers(state, player) {
+  for (let ti = 0; ti < state.territories.length; ti++) {
+    const t = state.territories[ti]
+    if (t.owner !== player || t.bank < TOWER_COST) continue
+
+    const income = computeIncome(state, t)
+    const upkeep = computeUpkeep(state, t)
+    // Only build towers when we have healthy income and enough surplus gold
+    if (income - upkeep < 2) continue
+    if (t.bank < TOWER_COST + 5) continue
+
+    // Find a border hex that would benefit most from a tower
+    let bestKey = null
+    let bestBorderCount = 0
+
+    for (let i = 0; i < t.hexKeys.length; i++) {
+      const k = t.hexKeys[i]
+      const h = state.hexes[k]
+      if (!h || h.terrain !== TERRAIN_LAND || h.unit || h.structure) continue
+
+      // Count enemy-owned adjacent hexes (tower is most useful here)
+      const nbrs = hexNeighborKeys(h.q, h.r)
+      let enemyNbrs = 0
+      for (let j = 0; j < nbrs.length; j++) {
+        const nh = state.hexes[nbrs[j]]
+        if (nh && nh.owner !== player && nh.owner !== null &&
+            nh.owner < state.numActivePlayers) {
+          enemyNbrs++
+        }
+      }
+      if (enemyNbrs > bestBorderCount) {
+        bestBorderCount = enemyNbrs
+        bestKey = k
+      }
+    }
+
+    if (bestKey && bestBorderCount > 0) {
+      state.hexes[bestKey].structure = STRUCTURE_TOWER
+      t.bank -= TOWER_COST
+      appendToLog(state, 'Turn ' + (state.turn + 1) + ': ' +
+        state.players[player].name + ' built a Tower at ' + bestKey)
+    }
+  }
+}
+
+// ── Coordinate helpers ────────────────────────────────────────────────────────
+
+// Axial hex distance
+function hexDist(q1, r1, q2, r2) {
+  return (Math.abs(q1 - q2) + Math.abs(q1 + r1 - q2 - r2) + Math.abs(r1 - r2)) / 2
+}
+
+// Distance from (q, r) to the nearest enemy-owned or neutral (non-water) hex.
+function distToNearestTarget(state, q, r, player) {
+  let minDist = Infinity
+  for (const k in state.hexes) {
+    const h = state.hexes[k]
+    if (!h || h.terrain === TERRAIN_WATER || h.owner === player) continue
+    const d = hexDist(q, r, h.q, h.r)
+    if (d < minDist) minDist = d
+  }
+  return minDist
 }
 
 export { isAIPlayer, runAITurn, appendToLog }
