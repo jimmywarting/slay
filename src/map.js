@@ -3,21 +3,22 @@
 import { hexKey, hexNeighborKeys } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_HUT } from './constants.js'
 
-const MAP_RADIUS = 7
+const MAP_RADIUS_DEFAULT = 7
 const NUM_PLAYERS = 6   // always 6 players on the map
 const SEEDS_PER_PLAYER = 3  // each player gets 3 random starting seeds → multiple territories
 
 // ── Grid creation ─────────────────────────────────────────────────────────────
 
-function generateHexMap() {
+function generateHexMap(radius) {
+  const R = radius || MAP_RADIUS_DEFAULT
   const hexes = {}
 
-  for (let q = -MAP_RADIUS; q <= MAP_RADIUS; q++) {
-    for (let r = -MAP_RADIUS; r <= MAP_RADIUS; r++) {
+  for (let q = -R; q <= R; q++) {
+    for (let r = -R; r <= R; r++) {
       // Axial hex constraint: keep the grid hexagonal
-      if (Math.abs(q + r) > MAP_RADIUS) continue
+      if (Math.abs(q + r) > R) continue
       const dist = Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r))
-      const terrain = dist >= MAP_RADIUS - 1 ? TERRAIN_WATER : TERRAIN_LAND
+      const terrain = dist >= R - 1 ? TERRAIN_WATER : TERRAIN_LAND
       hexes[hexKey(q, r)] = {
         q, r,
         terrain,
@@ -34,7 +35,7 @@ function generateHexMap() {
     const hex = hexes[key]
     if (hex.terrain !== TERRAIN_LAND) continue
     const dist = Math.max(Math.abs(hex.q), Math.abs(hex.r), Math.abs(hex.q + hex.r))
-    if (dist === MAP_RADIUS - 2 && Math.random() < 0.35) {
+    if (dist === R - 2 && Math.random() < 0.35) {
       hex.terrain = TERRAIN_WATER
     }
   }
@@ -258,4 +259,4 @@ function shuffleArray(arr) {
   }
 }
 
-export { generateHexMap, placeStartingTerritories }
+export { generateHexMap, placeStartingTerritories, MAP_RADIUS_DEFAULT }

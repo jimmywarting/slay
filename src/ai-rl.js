@@ -12,7 +12,7 @@ import {
   TERRAIN_WATER, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER
 } from './constants.js'
 import { hexNeighborKeys } from './hex.js'
-import { generateHexMap, placeStartingTerritories } from './map.js'
+import { generateHexMap, placeStartingTerritories, MAP_RADIUS_DEFAULT } from './map.js'
 import { startTurn, endTurn } from './turn-system.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -31,7 +31,7 @@ const ACT_REPOS_BASE  = 21      // 3: free-reposition unit slot 0-2
 
 const MAX_UNIT_SLOTS = 5
 const MAX_TERR_SLOTS = 3
-const MAP_RADIUS = 7            // must match map.js
+const MAP_RADIUS = MAP_RADIUS_DEFAULT  // max radius; used for coordinate normalisation in encodeState
 
 // Fitness rewards / penalties
 const R_WIN              =  5.0
@@ -487,7 +487,10 @@ function getUnmovedUnits (state, playerId) {
 function createHeadlessState (numActivePlayers) {
   const players = []
   for (let p = 0; p < 6; p++) players.push({ id: p, name: 'A' + p, color: '#fff' })
-  const hexes       = generateHexMap()
+  // Vary map radius (5–MAP_RADIUS) so the agent trains on different map sizes.
+  // MAP_RADIUS (7) is still the max and is used for coordinate normalisation.
+  const radius = 5 + Math.floor(Math.random() * (MAP_RADIUS - 4)) // 5, 6, or 7
+  const hexes       = generateHexMap(radius)
   const territories = placeStartingTerritories(hexes, numActivePlayers)
   const state = {
     players, numActivePlayers, hexes, territories,
@@ -539,7 +542,9 @@ function runAgentTurn (state, agent) {
 // Run a complete self-play game; updates agent.fitness in-place.
 function runSelfPlayGame (agents) {
   const n = agents.length
-  const state = createHeadlessState(n)
+  // Vary active player count (2..n) so the agent trains on different scenarios.
+  const numActive = 2 + Math.floor(Math.random() * (n - 1))
+  const state = createHeadlessState(numActive)
   let turn = 0
   while (!state.gameOver && turn < MAX_TURNS_PER_GAME) {
     const player = state.activePlayer
@@ -548,12 +553,12 @@ function runSelfPlayGame (agents) {
     checkWinConditionHeadless(state)
     turn++
   }
-  // Win bonus
-  if (state.winner !== null && state.winner < n) agents[state.winner].fitness += R_WIN
-  // Per-hex ownership bonus (partial credit)
+  // Win bonus (only active players compete)
+  if (state.winner !== null && state.winner < numActive) agents[state.winner].fitness += R_WIN
+  // Per-hex ownership bonus (partial credit, active players only)
   for (const k in state.hexes) {
     const h = state.hexes[k]
-    if (h.terrain !== TERRAIN_WATER && h.owner !== null && h.owner < n) {
+    if (h.terrain !== TERRAIN_WATER && h.owner !== null && h.owner < numActive) {
       agents[h.owner].fitness += 0.005
     }
   }
@@ -561,12 +566,14 @@ function runSelfPlayGame (agents) {
 }
 
 // Run a complete self-play game using pure-JS inference (no TF.js).
-// agentWeights: array of Float32Array, one per player (length = numActivePlayers).
-// Returns a Float64Array of fitness deltas indexed by player slot.
+// agentWeights: array of Float32Array, one per agent in the population.
+// Returns a Float64Array of fitness deltas indexed by agent slot.
 function runSelfPlayGameWeights (agentWeights) {
   const n = agentWeights.length
   const fitnessDeltas = new Float64Array(n)
-  const state = createHeadlessState(n)
+  // Vary active player count (2..n) so the agent trains on different scenarios.
+  const numActive = 2 + Math.floor(Math.random() * (n - 1))
+  const state = createHeadlessState(numActive)
   let turn = 0
   while (!state.gameOver && turn < MAX_TURNS_PER_GAME) {
     const player  = state.activePlayer
@@ -587,12 +594,12 @@ function runSelfPlayGameWeights (agentWeights) {
     checkWinConditionHeadless(state)
     turn++
   }
-  // Win bonus
-  if (state.winner !== null && state.winner < n) fitnessDeltas[state.winner] += R_WIN
-  // Per-hex ownership bonus (partial credit)
+  // Win bonus (only active players compete)
+  if (state.winner !== null && state.winner < numActive) fitnessDeltas[state.winner] += R_WIN
+  // Per-hex ownership bonus (partial credit, active players only)
   for (const k in state.hexes) {
     const h = state.hexes[k]
-    if (h.terrain !== TERRAIN_WATER && h.owner !== null && h.owner < n) {
+    if (h.terrain !== TERRAIN_WATER && h.owner !== null && h.owner < numActive) {
       fitnessDeltas[h.owner] += 0.005
     }
   }
