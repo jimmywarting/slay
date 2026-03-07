@@ -10,6 +10,7 @@ var PEASANT_COST = 5
 //
 // Free repositions (unit.moved stays false):
 //   own empty land hex (terrain=land, no unit, no hut/tower, gravestone OK)
+//   huts and towers are passable for BFS transit but not valid landing hexes
 //
 // Action moves (unit.moved becomes true):
 //   own hex with tree/palm      → clears it
@@ -40,15 +41,18 @@ function getValidMoves(state, unitHexKey) {
       if (!nh || nh.terrain === TERRAIN_WATER) continue
 
       if (nh.owner === player) {
-        var blocking = nh.structure === STRUCTURE_HUT || nh.structure === STRUCTURE_TOWER
-        if (blocking) continue  // huts and towers are impassable
-
         if (nh.unit) {
           // Hex with a unit — only reachable as a merge target (action)
           if (canMergeUnits(unit.level, nh.unit.level)) {
             validSet[nk] = true
           }
           // Cannot transit through a hex occupied by any unit
+        } else if (nh.structure === STRUCTURE_HUT || nh.structure === STRUCTURE_TOWER) {
+          // Huts and towers: passable for BFS transit but not a valid landing hex
+          if (!visited[nk]) {
+            visited[nk] = true
+            queue.push(nk)
+          }
         } else if (nh.terrain === TERRAIN_TREE || nh.terrain === TERRAIN_PALM) {
           // Tree/palm: can clear it (action), but cannot pass through
           validSet[nk] = true
