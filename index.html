@@ -195,6 +195,22 @@
       padding: 6px 10px;
     }
     #btnResetTrain:hover:not(:disabled) { background: #2c3e50; }
+
+    #btnWatchAI {
+      background: #16a085;
+      color: #fff;
+    }
+    #btnWatchAI:hover:not(:disabled) { background: #138d75; }
+    #btnWatchAI.watching {
+      background: #c0392b;
+    }
+    #btnWatchAI.watching:hover:not(:disabled) { background: #a93226; }
+
+    #btnNewGame {
+      background: #34495e;
+      color: #bdc3c7;
+    }
+    #btnNewGame:hover:not(:disabled) { background: #2c3e50; }
   </style>
 </head>
 <body>
@@ -233,6 +249,8 @@
     <div class="btn-group">
       <button id="btnEndTurn">End Turn ▶</button>
       <button id="btnUndo">↩ Undo Turn</button>
+      <button id="btnWatchAI">👁 Watch AI</button>
+      <button id="btnNewGame">🔄 New Game</button>
     </div>
   </div>
 

@@ -18,6 +18,8 @@ const AI_PLAYERS = [1]      // player indices that are AI-controlled
 const PLAYER_NAMES = ['Olive', 'Forest', 'Gold', 'Fern', 'Sage', 'Lime']
 
 let gameState = null
+let watchMode = false       // true while watch loop is running
+let watchLoopActive = false // guards against multiple concurrent loops
 
 // ── Initialisation ────────────────────────────────────────────────────────────
 
@@ -97,6 +99,25 @@ function initGame() {
       btnTrain.disabled     = false
       btnStopTrain.disabled = true
       updateTrainingUI(null)
+    })
+  }
+
+  const btnWatchAI = document.getElementById('btnWatchAI')
+  const btnNewGame = document.getElementById('btnNewGame')
+
+  if (btnWatchAI) {
+    btnWatchAI.addEventListener('click', function () {
+      if (watchLoopActive) {
+        stopWatchMode()
+      } else {
+        startWatchMode()
+      }
+    })
+  }
+
+  if (btnNewGame) {
+    btnNewGame.addEventListener('click', function () {
+      stopWatchMode()
     })
   }
 }
@@ -222,9 +243,12 @@ function updateUI(state) {
   const player = state.players[state.activePlayer]
   const aiTurn = isAIPlayer(state, state.activePlayer)
 
-  const nameLabel = aiTurn
-    ? '🤖 ' + player.name + ' (AI)' + (state.aiThinking ? ' – thinking…' : "'s Turn")
-    : player.name + "'s Turn"
+  const thinkingSuffix = state.aiThinking ? ' – thinking…' : "'s Turn"
+  const nameLabel = watchLoopActive
+    ? '👁 ' + player.name + ' (AI)' + thinkingSuffix
+    : aiTurn
+      ? '🤖 ' + player.name + ' (AI)' + thinkingSuffix
+      : player.name + "'s Turn"
   document.getElementById('playerName').textContent = nameLabel
   document.getElementById('playerName').style.color = player.color
   document.getElementById('turnNumber').textContent = 'Turn ' + (state.turn + 1)
@@ -303,6 +327,14 @@ function updateUI(state) {
   document.getElementById('btnEndTurn').disabled = !humanTurn || !!state.aiThinking
   document.getElementById('btnUndo').disabled = !humanTurn || !!state.aiThinking
 
+  // Watch AI button: toggle label and colour based on active state.
+  const btnWatchAI = document.getElementById('btnWatchAI')
+  if (btnWatchAI) {
+    btnWatchAI.textContent = watchLoopActive ? '⏹ Stop Watching' : '👁 Watch AI'
+    btnWatchAI.classList.toggle('watching', watchLoopActive)
+    btnWatchAI.disabled = false
+  }
+
   // Legend sidebar
   updateLegend(state)
 
@@ -340,6 +372,53 @@ function setMessage(state, msg) {
   state.message = msg
 }
 
+// ── Watch mode ────────────────────────────────────────────────────────────────
+
+// Start a continuous AI-vs-AI exhibition: all active players are AI-controlled.
+// Games restart automatically with a short pause between them until stopped.
+async function startWatchMode() {
+  if (watchLoopActive) return
+  watchMode = true
+  watchLoopActive = true
+
+  // All active player slots become AI-controlled.
+  const aiPlayerIndices = Array.from({ length: NUM_PLAYERS }, function (_, i) { return i })
+
+  gameState = createGameState(NUM_PLAYERS)
+  gameState.aiPlayers = aiPlayerIndices
+  render(gameState)
+  updateUI(gameState)
+
+  while (watchMode) {
+    await runPendingAITurns()
+    if (!watchMode) break
+
+    // Show the result briefly before restarting.
+    render(gameState)
+    updateUI(gameState)
+    await new Promise(function (resolve) { setTimeout(resolve, 2500) })
+    if (!watchMode) break
+
+    gameState = createGameState(NUM_PLAYERS)
+    gameState.aiPlayers = aiPlayerIndices
+    render(gameState)
+    updateUI(gameState)
+  }
+
+  watchLoopActive = false
+  updateUI(gameState)
+}
+
+// Stop the watch loop and reset to a normal human-vs-AI game.
+function stopWatchMode() {
+  watchMode = false
+  // Replacing gameState makes the running loop's isAIPlayer check fail on the
+  // very next iteration, cleanly aborting runPendingAITurns without extra flags.
+  gameState = createGameState(NUM_PLAYERS)
+  render(gameState)
+  updateUI(gameState)
+}
+
 // Run AI turns for as long as the active player is AI-controlled.
 // Shows "thinking..." in the UI while waiting for the LLM response.
 async function runPendingAITurns() {
@@ -348,8 +427,14 @@ async function runPendingAITurns() {
     render(gameState)
     updateUI(gameState)
 
+    // Abort immediately if gameState was replaced before we even sleep.
+    if (!isAIPlayer(gameState, gameState.activePlayer)) break
+
     // Small pause so the player can see the transition before the AI acts
     await new Promise(function (resolve) { setTimeout(resolve, 500) })
+
+    // Abort if gameState was replaced (e.g. stop-watch / new-game clicked) during the sleep.
+    if (!isAIPlayer(gameState, gameState.activePlayer)) break
 
     await runAITurn(gameState)
 
