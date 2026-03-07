@@ -1,7 +1,7 @@
 // Unit definitions and merging rules
 // Index 0 unused; levels 1–4 correspond to array positions.
 
-var UNIT_DEFS = [
+const UNIT_DEFS = [
   null,
   { level: 1, name: 'Peasant',  upkeep: 2,  strength: 1, cost: 5,    symbol: 'P' },
   { level: 2, name: 'Spearman', upkeep: 6,  strength: 2, cost: null, symbol: 'S' },

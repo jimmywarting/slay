@@ -10,15 +10,16 @@ import { computeIncome, computeUpkeep } from './economy.js'
 import { UNIT_DEFS } from './units.js'
 import { TERRAIN_WATER } from './constants.js'
 
-var NUM_PLAYERS = 2
-var PLAYER_NAMES = ['Red', 'Blue', 'Green', 'Orange']
+const NUM_PLAYERS = 2  // number of active (human-controlled) players
+const NUM_TOTAL_PLAYERS = 6  // total players always present on the map
+const PLAYER_NAMES = ['Olive', 'Forest', 'Gold', 'Fern', 'Sage', 'Lime']
 
-var gameState = null
+let gameState = null
 
 // ── Initialisation ────────────────────────────────────────────────────────────
 
 function initGame() {
-  var canvasEl = document.getElementById('gameCanvas')
+  const canvasEl = document.getElementById('gameCanvas')
   initRenderer(canvasEl)
 
   gameState = createGameState(NUM_PLAYERS)
@@ -59,9 +60,10 @@ function initGame() {
   })
 }
 
-function createGameState(numPlayers) {
-  var players = []
-  for (var i = 0; i < numPlayers; i++) {
+function createGameState(numActivePlayers) {
+  // Always create all 6 players; only the first numActivePlayers are active
+  const players = []
+  for (let i = 0; i < NUM_TOTAL_PLAYERS; i++) {
     players.push({
       id: i,
       name: PLAYER_NAMES[i],
@@ -69,10 +71,10 @@ function createGameState(numPlayers) {
     })
   }
 
-  var hexes = generateHexMap()
-  var territories = placeStartingTerritories(hexes, numPlayers)
+  const hexes = generateHexMap()
+  const territories = placeStartingTerritories(hexes, numActivePlayers)
 
-  var state = {
+  const state = {
     players: players,
     hexes: hexes,
     territories: territories,
@@ -97,7 +99,7 @@ function createGameState(numPlayers) {
 
 function handleBuyUnit(state) {
   // Find the territory for the selected hex (or any territory of active player)
-  var territory = null
+  let territory = null
   if (state.selectedHex) {
     territory = getTerritoryForHex(state, state.selectedHex)
     if (territory && territory.owner !== state.activePlayer) territory = null
@@ -105,8 +107,8 @@ function handleBuyUnit(state) {
 
   // Fallback: first territory with enough gold
   if (!territory) {
-    for (var i = 0; i < state.territories.length; i++) {
-      var t = state.territories[i]
+    for (let i = 0; i < state.territories.length; i++) {
+      const t = state.territories[i]
       if (t.owner === state.activePlayer && t.bank >= PEASANT_COST) {
         territory = t
         break
@@ -131,14 +133,14 @@ function handleBuyUnit(state) {
 
 function handleBuildTower(state) {
   // Find territory with enough gold
-  var territory = null
+  let territory = null
   if (state.selectedHex) {
     territory = getTerritoryForHex(state, state.selectedHex)
     if (territory && territory.owner !== state.activePlayer) territory = null
   }
   if (!territory) {
-    for (var i = 0; i < state.territories.length; i++) {
-      var t = state.territories[i]
+    for (let i = 0; i < state.territories.length; i++) {
+      const t = state.territories[i]
       if (t.owner === state.activePlayer && t.bank >= TOWER_COST) {
         territory = t
         break
@@ -162,20 +164,20 @@ function handleBuildTower(state) {
 // ── UI updates ────────────────────────────────────────────────────────────────
 
 function updateUI(state) {
-  var player = state.players[state.activePlayer]
+  const player = state.players[state.activePlayer]
 
   document.getElementById('playerName').textContent = player.name + "'s Turn"
   document.getElementById('playerName').style.color = player.color
   document.getElementById('turnNumber').textContent = 'Turn ' + (state.turn + 1)
 
   // Territory info for selected hex
-  var infoEl = document.getElementById('territoryInfo')
-  var territory = state.selectedHex ? getTerritoryForHex(state, state.selectedHex) : null
+  const infoEl = document.getElementById('territoryInfo')
+  const territory = state.selectedHex ? getTerritoryForHex(state, state.selectedHex) : null
 
   if (territory) {
-    var income = computeIncome(state, territory)
-    var upkeep = computeUpkeep(state, territory)
-    var owner = state.players[territory.owner]
+    const income = computeIncome(state, territory)
+    const upkeep = computeUpkeep(state, territory)
+    const owner = state.players[territory.owner]
     infoEl.innerHTML =
       '<strong>' + owner.name + ' Territory</strong><br>' +
       'Hexes: ' + territory.hexKeys.length + '<br>' +
@@ -187,14 +189,14 @@ function updateUI(state) {
   }
 
   // Selected hex info
-  var hexInfoEl = document.getElementById('hexInfo')
+  const hexInfoEl = document.getElementById('hexInfo')
   if (state.selectedHex) {
-    var hex = state.hexes[state.selectedHex]
+    const hex = state.hexes[state.selectedHex]
     if (hex) {
-      var desc = 'Hex (' + hex.q + ', ' + hex.r + ')  terrain: ' + hex.terrain
+      let desc = 'Hex (' + hex.q + ', ' + hex.r + ')  terrain: ' + hex.terrain
       if (hex.owner !== null) desc += '  owner: ' + state.players[hex.owner].name
       if (hex.unit) {
-        var ud = UNIT_DEFS[hex.unit.level]
+        const ud = UNIT_DEFS[hex.unit.level]
         desc += '<br>Unit: ' + ud.name + ' (str ' + ud.strength + ', upkeep ' + ud.upkeep + ')'
         if (hex.unit.moved) desc += ' <em>[moved]</em>'
       }
@@ -206,9 +208,9 @@ function updateUI(state) {
   }
 
   // Mode message
-  var msgEl = document.getElementById('message')
+  const msgEl = document.getElementById('message')
   if (state.gameOver) {
-    var winnerName = state.winner !== null ? state.players[state.winner].name : 'Nobody'
+    const winnerName = state.winner !== null ? state.players[state.winner].name : 'Nobody'
     msgEl.textContent = '🏆 Game Over – ' + winnerName + ' wins!'
     msgEl.style.color = state.winner !== null ? state.players[state.winner].color : '#ecf0f1'
   } else if (state.mode === 'buy') {
@@ -226,11 +228,11 @@ function updateUI(state) {
   }
 
   // Button states
-  var notOver = !state.gameOver
-  var activeTerritoryHasGoldForUnit = notOver && state.territories.some(function (t) {
+  const notOver = !state.gameOver
+  const activeTerritoryHasGoldForUnit = notOver && state.territories.some(function (t) {
     return t.owner === state.activePlayer && t.bank >= PEASANT_COST
   })
-  var activeTerritoryHasGoldForTower = notOver && state.territories.some(function (t) {
+  const activeTerritoryHasGoldForTower = notOver && state.territories.some(function (t) {
     return t.owner === state.activePlayer && t.bank >= TOWER_COST
   })
 
@@ -244,10 +246,10 @@ function updateUI(state) {
 }
 
 function updateLegend(state) {
-  var el = document.getElementById('legend')
+  const el = document.getElementById('legend')
   if (!el) return
 
-  var rows = UNIT_DEFS.slice(1).map(function (u) {
+  const rows = UNIT_DEFS.slice(1).map(function (u) {
     return '<tr><td>' + u.name + '</td><td>' + u.strength + '</td>' +
            '<td>' + u.upkeep + '</td>' +
            (u.cost ? '<td>' + u.cost + '</td>' : '<td>—</td>') + '</tr>'
@@ -269,15 +271,15 @@ function checkWinCondition(state) {
   if (state.gameOver) return
 
   // Count land-owning players
-  var ownedBy = {}
-  for (var k in state.hexes) {
-    var hex = state.hexes[k]
+  const ownedBy = {}
+  for (const k in state.hexes) {
+    const hex = state.hexes[k]
     if (hex.terrain !== TERRAIN_WATER && hex.owner !== null) {
       ownedBy[hex.owner] = true
     }
   }
 
-  var activePlayers = Object.keys(ownedBy).map(Number)
+  const activePlayers = Object.keys(ownedBy).map(Number)
   if (activePlayers.length === 1) {
     state.gameOver = true
     state.winner = activePlayers[0]

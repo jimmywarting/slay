@@ -6,32 +6,32 @@ import { getTerritoryForHex } from './territory.js'
 import { TOWER_COST, PEASANT_COST, getValidMoves, executeMove } from './movement.js'
 import { render, offsetX, offsetY } from './renderer.js'
 
-var updateUI = null
+let updateUI = null
 
 function initInput(canvasEl, state, uiUpdater) {
   if (typeof uiUpdater !== 'function') throw new Error('initInput: uiUpdater must be a function')
   updateUI = uiUpdater
   canvasEl.addEventListener('click', function (e) {
-    var rect = canvasEl.getBoundingClientRect()
-    var px = e.clientX - rect.left - offsetX
-    var py = e.clientY - rect.top - offsetY
-    var hc = pixelToHex(px, py)
+    const rect = canvasEl.getBoundingClientRect()
+    const px = e.clientX - rect.left - offsetX
+    const py = e.clientY - rect.top - offsetY
+    const hc = pixelToHex(px, py)
     handleHexClick(state, hexKey(hc.q, hc.r))
   })
 }
 
 function handleHexClick(state, key) {
-  var hex = state.hexes[key]
+  const hex = state.hexes[key]
   if (!hex || hex.terrain === TERRAIN_WATER) {
     clearSelection(state)
     return
   }
 
-  var player = state.activePlayer
+  const player = state.activePlayer
 
   // ── Buy-mode: place a new peasant ──────────────────────────────────────────
   if (state.mode === 'buy') {
-    var bt = getTerritoryForHex(state, key)
+    const bt = getTerritoryForHex(state, key)
     if (bt && bt.owner === player &&
         bt.bank >= PEASANT_COST &&
         hex.terrain === TERRAIN_LAND &&
@@ -56,7 +56,7 @@ function handleHexClick(state, key) {
     if (hex.owner === player &&
         hex.terrain === TERRAIN_LAND &&
         !hex.unit && !hex.structure) {
-      var territory = getTerritoryForHex(state, key)
+      const territory = getTerritoryForHex(state, key)
       if (territory && territory.bank >= TOWER_COST) {
         hex.structure = STRUCTURE_TOWER
         territory.bank -= TOWER_COST
@@ -73,12 +73,12 @@ function handleHexClick(state, key) {
   // ── Unit selected — try to move ────────────────────────────────────────────
   if (state.selectedUnit) {
     if (state.validMoves.indexOf(key) !== -1) {
-      var wasFree = executeMove(state, state.selectedUnit, key)
+      const wasFree = executeMove(state, state.selectedUnit, key)
       if (wasFree) {
         // Free reposition — unit can still act; re-select at new position
         state.selectedUnit = key
         state.selectedHex = key
-        var vm = getValidMoves(state, key)
+        const vm = getValidMoves(state, key)
         state.validMoves = vm.moves
         state.freeMoves = vm.freeSet
       } else {
@@ -97,7 +97,7 @@ function handleHexClick(state, key) {
     if (hex.owner === player && hex.unit && !hex.unit.moved) {
       state.selectedUnit = key
       state.selectedHex = key
-      var vm2 = getValidMoves(state, key)
+      const vm2 = getValidMoves(state, key)
       state.validMoves = vm2.moves
       state.freeMoves = vm2.freeSet
       render(state)
@@ -114,7 +114,7 @@ function handleHexClick(state, key) {
   if (hex.owner === player && hex.unit && !hex.unit.moved) {
     state.selectedUnit = key
     state.selectedHex = key
-    var vm3 = getValidMoves(state, key)
+    const vm3 = getValidMoves(state, key)
     state.validMoves = vm3.moves
     state.freeMoves = vm3.freeSet
   } else {

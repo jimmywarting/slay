@@ -4,15 +4,14 @@ import { HEX_SIZE, hexToPixel, hexCorners } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_TREE, TERRAIN_PALM, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
 import { UNIT_DEFS } from './units.js'
 
-var PLAYER_COLORS = ['#c0392b', '#2980b9', '#27ae60', '#d35400']
-var PLAYER_HEX_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#e67e22']
-var NEUTRAL_LAND_COLOR = '#7dbe6a'
-var WATER_COLOR = '#2471a3'
-var WATER_DEEP_COLOR = '#1a5276'
+const PLAYER_COLORS     = ['#736c03', '#158a17', '#dbc447', '#02792f', '#ada740', '#94c655']
+const PLAYER_HEX_COLORS = ['#736c03', '#158a17', '#dbc447', '#02792f', '#ada740', '#94c655']
+const WATER_COLOR      = '#2471a3'
+const WATER_DEEP_COLOR = '#1a5276'
 
-var canvas, ctx
-var offsetX = 0
-var offsetY = 0
+let canvas, ctx
+let offsetX = 0
+let offsetY = 0
 
 function initRenderer(canvasEl) {
   canvas = canvasEl
@@ -21,8 +20,8 @@ function initRenderer(canvasEl) {
 }
 
 function resizeCanvas() {
-  var sidebar = document.getElementById('sidebar')
-  var sidebarWidth = sidebar ? sidebar.offsetWidth : 280
+  const sidebar = document.getElementById('sidebar')
+  const sidebarWidth = sidebar ? sidebar.offsetWidth : 280
   canvas.width = window.innerWidth - sidebarWidth
   canvas.height = window.innerHeight
   offsetX = canvas.width / 2
@@ -39,21 +38,21 @@ function render(state) {
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
   // Draw all hexes
-  var keys = Object.keys(state.hexes)
-  for (var i = 0; i < keys.length; i++) {
-    var hex = state.hexes[keys[i]]
+  const keys = Object.keys(state.hexes)
+  for (let i = 0; i < keys.length; i++) {
+    const hex = state.hexes[keys[i]]
     if (hex.terrain !== TERRAIN_WATER) drawHexBase(state, hex)
   }
   // Draw water on top for correct overlap at edges
-  for (var j = 0; j < keys.length; j++) {
-    var wh = state.hexes[keys[j]]
+  for (let j = 0; j < keys.length; j++) {
+    const wh = state.hexes[keys[j]]
     if (wh.terrain === TERRAIN_WATER) drawWaterHex(wh)
   }
 
   // Valid move highlights — blue for free repositions, gold for action moves
-  for (var vi = 0; vi < state.validMoves.length; vi++) {
-    var vmk = state.validMoves[vi]
-    var vmh = state.hexes[vmk]
+  for (let vi = 0; vi < state.validMoves.length; vi++) {
+    const vmk = state.validMoves[vi]
+    const vmh = state.hexes[vmk]
     if (!vmh) continue
     if (state.freeMoves && state.freeMoves[vmk]) {
       drawOverlay(vmh, 'rgba(100,200,255,0.40)', 0)  // light blue = free reposition
@@ -64,15 +63,15 @@ function render(state) {
 
   // Selected unit highlight
   if (state.selectedUnit) {
-    var sh = state.hexes[state.selectedUnit]
+    const sh = state.hexes[state.selectedUnit]
     if (sh) drawOverlay(sh, 'rgba(255,255,255,0.5)', 2)
   }
 
   // Buy mode target highlight
   if (state.mode === 'buy') {
-    var bkeys = Object.keys(state.hexes)
-    for (var bi = 0; bi < bkeys.length; bi++) {
-      var bh = state.hexes[bkeys[bi]]
+    const bkeys = Object.keys(state.hexes)
+    for (let bi = 0; bi < bkeys.length; bi++) {
+      const bh = state.hexes[bkeys[bi]]
       if (bh.owner === state.activePlayer &&
           bh.terrain === TERRAIN_LAND &&
           !bh.unit && !bh.structure) {
@@ -83,9 +82,9 @@ function render(state) {
 
   // Build tower mode target highlight
   if (state.mode === 'build') {
-    var tkeys = Object.keys(state.hexes)
-    for (var ti = 0; ti < tkeys.length; ti++) {
-      var th = state.hexes[tkeys[ti]]
+    const tkeys = Object.keys(state.hexes)
+    for (let ti = 0; ti < tkeys.length; ti++) {
+      const th = state.hexes[tkeys[ti]]
       if (th.owner === state.activePlayer &&
           th.terrain === TERRAIN_LAND &&
           !th.unit && !th.structure) {
@@ -96,14 +95,14 @@ function render(state) {
 }
 
 function drawWaterHex(hex) {
-  var pos = hexToPixel(hex.q, hex.r)
-  var cx = pos.x + offsetX
-  var cy = pos.y + offsetY
-  var corners = hexCorners(cx, cy)
+  const pos = hexToPixel(hex.q, hex.r)
+  const cx = pos.x + offsetX
+  const cy = pos.y + offsetY
+  const corners = hexCorners(cx, cy)
 
   ctx.beginPath()
   ctx.moveTo(corners[0].x, corners[0].y)
-  for (var i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y)
+  for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y)
   ctx.closePath()
   ctx.fillStyle = WATER_COLOR
   ctx.fill()
@@ -113,27 +112,19 @@ function drawWaterHex(hex) {
 }
 
 function drawHexBase(state, hex) {
-  var pos = hexToPixel(hex.q, hex.r)
-  var cx = pos.x + offsetX
-  var cy = pos.y + offsetY
-  var corners = hexCorners(cx, cy)
+  const pos = hexToPixel(hex.q, hex.r)
+  const cx = pos.x + offsetX
+  const cy = pos.y + offsetY
+  const corners = hexCorners(cx, cy)
 
-  // Fill color
-  var fillColor
-  if (hex.owner !== null) {
-    fillColor = PLAYER_HEX_COLORS[hex.owner % 4]
-    // Darken for tree/palm
-    if (hex.terrain === TERRAIN_TREE) fillColor = darken(fillColor, 0.25)
-    else if (hex.terrain === TERRAIN_PALM) fillColor = darken(fillColor, 0.2)
-  } else {
-    if (hex.terrain === TERRAIN_TREE) fillColor = '#3d8b3d'
-    else if (hex.terrain === TERRAIN_PALM) fillColor = '#2e7d32'
-    else fillColor = NEUTRAL_LAND_COLOR
-  }
+  // Fill color — every non-water hex is always owned by a player
+  let fillColor = PLAYER_HEX_COLORS[hex.owner % PLAYER_HEX_COLORS.length]
+  if (hex.terrain === TERRAIN_TREE) fillColor = darken(fillColor, 0.25)
+  else if (hex.terrain === TERRAIN_PALM) fillColor = darken(fillColor, 0.2)
 
   ctx.beginPath()
   ctx.moveTo(corners[0].x, corners[0].y)
-  for (var i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y)
+  for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y)
   ctx.closePath()
   ctx.fillStyle = fillColor
   ctx.fill()
@@ -146,7 +137,7 @@ function drawHexBase(state, hex) {
 }
 
 function drawHexContent(state, hex, cx, cy) {
-  var r = HEX_SIZE * 0.42
+  const r = HEX_SIZE * 0.42
 
   if (hex.terrain === TERRAIN_TREE) {
     drawTreeIcon(cx, cy, r * 0.85)
@@ -168,14 +159,14 @@ function drawHexContent(state, hex, cx, cy) {
 }
 
 function drawOverlay(hex, color, strokeWidth) {
-  var pos = hexToPixel(hex.q, hex.r)
-  var cx = pos.x + offsetX
-  var cy = pos.y + offsetY
-  var corners = hexCorners(cx, cy)
+  const pos = hexToPixel(hex.q, hex.r)
+  const cx = pos.x + offsetX
+  const cy = pos.y + offsetY
+  const corners = hexCorners(cx, cy)
 
   ctx.beginPath()
   ctx.moveTo(corners[0].x, corners[0].y)
-  for (var i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y)
+  for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y)
   ctx.closePath()
   ctx.fillStyle = color
   ctx.fill()
@@ -213,10 +204,10 @@ function drawPalmIcon(cx, cy, r) {
   // Fronds
   ctx.strokeStyle = '#2e7d32'
   ctx.lineWidth = r * 0.14
-  var fronds = [
+  const fronds = [
     [-0.9, -0.8], [0.9, -0.8], [0, -1.2], [-1.1, -0.2], [1.1, -0.2]
   ]
-  for (var i = 0; i < fronds.length; i++) {
+  for (let i = 0; i < fronds.length; i++) {
     ctx.beginPath()
     ctx.moveTo(cx, cy - r * 0.85)
     ctx.lineTo(cx + fronds[i][0] * r * 0.65, cy + fronds[i][1] * r * 0.65)
@@ -225,8 +216,8 @@ function drawPalmIcon(cx, cy, r) {
 }
 
 function drawHutIcon(cx, cy, r) {
-  var w = r * 1.1
-  var h = r * 0.9
+  const w = r * 1.1
+  const h = r * 0.9
 
   // Body
   ctx.fillStyle = '#8d6e63'
@@ -247,8 +238,8 @@ function drawHutIcon(cx, cy, r) {
 }
 
 function drawTowerIcon(cx, cy, r) {
-  var w = r * 0.9
-  var h = r * 1.3
+  const w = r * 0.9
+  const h = r * 1.3
 
   // Body
   ctx.fillStyle = '#78909c'
@@ -256,8 +247,8 @@ function drawTowerIcon(cx, cy, r) {
 
   // Battlements (3 merlons)
   ctx.fillStyle = '#90a4ae'
-  var merlon = w * 0.28
-  for (var i = -1; i <= 1; i++) {
+  const merlon = w * 0.28
+  for (let i = -1; i <= 1; i++) {
     ctx.fillRect(cx + i * merlon - merlon * 0.45, cy - h * 0.5 - r * 0.4, merlon * 0.9, r * 0.4)
   }
 
@@ -279,11 +270,11 @@ function drawGravestoneIcon(cx, cy, r) {
   ctx.fill()
 }
 
-var UNIT_COLORS = ['', '#f9a825', '#ef5350', '#7b1fa2', '#1a237e']
+const UNIT_COLORS = ['', '#f9a825', '#ef5350', '#7b1fa2', '#1a237e']
 
 function drawUnitIcon(unit, cx, cy, r) {
-  var def = UNIT_DEFS[unit.level]
-  var color = unit.moved ? '#9e9e9e' : UNIT_COLORS[unit.level]
+  const def = UNIT_DEFS[unit.level]
+  const color = unit.moved ? '#9e9e9e' : UNIT_COLORS[unit.level]
 
   // Outer circle
   ctx.fillStyle = color
@@ -305,7 +296,7 @@ function drawUnitIcon(unit, cx, cy, r) {
 // ── Colour helpers ────────────────────────────────────────────────────────────
 
 function darken(hexColor, amount) {
-  var c = parseHexColor(hexColor)
+  const c = parseHexColor(hexColor)
   return 'rgb(' +
     Math.round(c.r * (1 - amount)) + ',' +
     Math.round(c.g * (1 - amount)) + ',' +
@@ -313,7 +304,7 @@ function darken(hexColor, amount) {
 }
 
 function parseHexColor(hex) {
-  var m = /^#([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  const m = /^#([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
   return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : { r: 128, g: 128, b: 128 }
 }
 

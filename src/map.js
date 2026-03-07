@@ -3,20 +3,31 @@
 import { hexKey, hexNeighborKeys, hexDistance } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_HUT } from './constants.js'
 
-var MAP_RADIUS = 7
+const MAP_RADIUS = 7
+
+// Six evenly-spaced start positions at the vertices of a radius-4 hexagon
+const NUM_TERRITORIES = 6
+const START_POSITIONS = [
+  { q:  0, r: -4 },
+  { q:  4, r: -4 },
+  { q:  4, r:  0 },
+  { q:  0, r:  4 },
+  { q: -4, r:  4 },
+  { q: -4, r:  0 }
+]
 
 // Generate the base hex grid
 function generateHexMap() {
-  var hexes = {}
+  const hexes = {}
 
-  for (var q = -MAP_RADIUS; q <= MAP_RADIUS; q++) {
-    for (var r = -MAP_RADIUS; r <= MAP_RADIUS; r++) {
+  for (let q = -MAP_RADIUS; q <= MAP_RADIUS; q++) {
+    for (let r = -MAP_RADIUS; r <= MAP_RADIUS; r++) {
       // Axial hex constraint: |q| + |r| + |s| = 0 where s = -q-r.
       // Equivalent to Math.abs(q+r) <= MAP_RADIUS — keeps the grid hexagonal.
       if (Math.abs(q + r) > MAP_RADIUS) continue
-      var dist = Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r))
-      var terrain = dist >= MAP_RADIUS - 1 ? TERRAIN_WATER : TERRAIN_LAND
-      var key = hexKey(q, r)
+      const dist = Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r))
+      const terrain = dist >= MAP_RADIUS - 1 ? TERRAIN_WATER : TERRAIN_LAND
+      const key = hexKey(q, r)
       hexes[key] = {
         q: q,
         r: r,
@@ -35,13 +46,13 @@ function generateHexMap() {
 
 // Scatter trees and palms on the inner land area
 function addNaturalTerrain(hexes) {
-  var rng = seededRng(12345)
+  const rng = seededRng(12345)
 
   // First pass: edge water and coastal palms
-  for (var key in hexes) {
-    var hex = hexes[key]
+  for (const key in hexes) {
+    const hex = hexes[key]
     if (hex.terrain !== TERRAIN_LAND) continue
-    var dist = Math.max(Math.abs(hex.q), Math.abs(hex.r), Math.abs(hex.q + hex.r))
+    const dist = Math.max(Math.abs(hex.q), Math.abs(hex.r), Math.abs(hex.q + hex.r))
 
     if (dist === MAP_RADIUS - 2 && rng() < 0.35) {
       hex.terrain = TERRAIN_WATER
@@ -49,102 +60,91 @@ function addNaturalTerrain(hexes) {
   }
 
   // Second pass: coastal palms and inland trees
-  for (var key2 in hexes) {
-    var hex2 = hexes[key2]
-    if (hex2.terrain !== TERRAIN_LAND) continue
+  for (const key in hexes) {
+    const hex = hexes[key]
+    if (hex.terrain !== TERRAIN_LAND) continue
 
-    var nearWater = hexNeighborKeys(hex2.q, hex2.r).some(function (k) {
-      var n = hexes[k]
+    const nearWater = hexNeighborKeys(hex.q, hex.r).some(function (k) {
+      const n = hexes[k]
       return !n || n.terrain === TERRAIN_WATER
     })
 
     if (nearWater) {
-      if (rng() < 0.3) hex2.terrain = TERRAIN_PALM
+      if (rng() < 0.3) hex.terrain = TERRAIN_PALM
     } else {
-      if (rng() < 0.12) hex2.terrain = TERRAIN_TREE
+      if (rng() < 0.12) hex.terrain = TERRAIN_TREE
     }
   }
 }
 
-// Place player starting territories on the map
-function placeStartingTerritories(hexes, numPlayers) {
-  var territories = []
+// Assign every non-water hex to one of NUM_TERRITORIES players via Voronoi
+// partition, then set up territories. Only the first numActivePlayers players
+// receive a starting hut and bank; the rest simply own their land.
+function placeStartingTerritories(hexes, numActivePlayers) {
+  // Build per-player hex lists via Voronoi (nearest start position)
+  const playerHexKeys = []
+  for (let p = 0; p < NUM_TERRITORIES; p++) playerHexKeys.push([])
 
-  // Evenly-spaced start positions for up to 4 players (axial coords)
-  var startPositions = [
-    { q: -4, r: 0 },
-    { q: 4,  r: 0 },
-    { q: 0,  r: -4 },
-    { q: 0,  r: 4 }
-  ]
+  for (const key in hexes) {
+    const hex = hexes[key]
+    if (hex.terrain === TERRAIN_WATER) continue
 
-  var usedKeys = {}
+    let nearest = 0
+    let minDist = Infinity
+    for (let p = 0; p < NUM_TERRITORIES; p++) {
+      const d = hexDistance(hex.q, hex.r, START_POSITIONS[p].q, START_POSITIONS[p].r)
+      if (d < minDist) { minDist = d; nearest = p }
+    }
+    hex.owner = nearest
+    playerHexKeys[nearest].push(key)
+  }
 
-  for (var p = 0; p < numPlayers; p++) {
-    var sp = startPositions[p % startPositions.length]
-    var centerHex = findNearestLandHex(hexes, sp.q, sp.r, usedKeys)
-    if (!centerHex) continue
+  // Build territory objects; active players get a hut + starting bank
+  const territories = []
+  for (let p = 0; p < NUM_TERRITORIES; p++) {
+    const active = p < numActivePlayers
+    let hutHexKey = null
 
-    var centerKey = hexKey(centerHex.q, centerHex.r)
-    var claimedKeys = [centerKey]
-    usedKeys[centerKey] = true
-
-    // Claim 2 adjacent land hexes
-    var neighbors = hexNeighborKeys(centerHex.q, centerHex.r)
-    var added = 0
-    for (var i = 0; i < neighbors.length && added < 2; i++) {
-      var nk = neighbors[i]
-      var nh = hexes[nk]
-      if (nh && nh.terrain !== TERRAIN_WATER && !usedKeys[nk]) {
-        claimedKeys.push(nk)
-        usedKeys[nk] = true
-        added++
+    if (active) {
+      const sp = START_POSITIONS[p]
+      const center = findNearestOwnedLandHex(hexes, sp.q, sp.r, p)
+      if (center) {
+        hutHexKey = hexKey(center.q, center.r)
+        center.terrain = TERRAIN_LAND
+        center.structure = STRUCTURE_HUT
       }
     }
 
-    // Assign ownership and clear to land
-    for (var j = 0; j < claimedKeys.length; j++) {
-      var h = hexes[claimedKeys[j]]
-      h.owner = p
-      h.terrain = TERRAIN_LAND
-    }
-
-    // Place hut at center
-    centerHex.structure = STRUCTURE_HUT
-
     territories.push({
       owner: p,
-      hexKeys: claimedKeys.slice(),
-      bank: 5,
-      hutHexKey: centerKey
+      hexKeys: playerHexKeys[p].slice(),
+      bank: active ? 5 : 0,
+      hutHexKey: hutHexKey
     })
   }
 
   return territories
 }
 
-// BFS-style nearest available land hex to (targetQ, targetR)
-function findNearestLandHex(hexes, targetQ, targetR, usedKeys) {
-  var allKeys = Object.keys(hexes)
-  allKeys.sort(function (a, b) {
-    var ha = hexes[a]
-    var hb = hexes[b]
-    return hexDistance(ha.q, ha.r, targetQ, targetR) - hexDistance(hb.q, hb.r, targetQ, targetR)
-  })
-  for (var i = 0; i < allKeys.length; i++) {
-    var k = allKeys[i]
-    var h = hexes[k]
-    if (h.terrain !== TERRAIN_WATER && !usedKeys[k]) return h
+// Find the non-water hex owned by `owner` that is closest to (targetQ, targetR)
+function findNearestOwnedLandHex(hexes, targetQ, targetR, owner) {
+  let best = null
+  let bestDist = Infinity
+  for (const key in hexes) {
+    const h = hexes[key]
+    if (h.owner !== owner || h.terrain === TERRAIN_WATER) continue
+    const d = hexDistance(h.q, h.r, targetQ, targetR)
+    if (d < bestDist) { bestDist = d; best = h }
   }
-  return null
+  return best
 }
 
 // Deterministic seeded pseudo-random number generator (Mulberry32)
 function seededRng(seed) {
-  var s = seed >>> 0
+  let s = seed >>> 0
   return function () {
     s = (s + 0x6D2B79F5) >>> 0
-    var t = Math.imul(s ^ (s >>> 15), 1 | s)
+    let t = Math.imul(s ^ (s >>> 15), 1 | s)
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
