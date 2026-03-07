@@ -3,70 +3,111 @@
 var TOWER_COST = 10
 var PEASANT_COST = 5
 
-// Returns an array of hex keys the unit at unitHexKey can legally move to
+// BFS through own territory to find all reachable destinations.
+// Returns { moves: [keys], freeSet: {key: true} }
+//   moves   — all valid destination keys (free repositions + actions)
+//   freeSet — subset of moves that are free repositions (no move cost)
+//
+// Free repositions (unit.moved stays false):
+//   own empty land hex (terrain=land, no unit, no hut/tower, gravestone OK)
+//
+// Action moves (unit.moved becomes true):
+//   own hex with tree/palm      → clears it
+//   own hex with same-level unit → merges
+//   enemy/neutral hex            → capture (requires attacker > defender strength)
 function getValidMoves(state, unitHexKey) {
   var fromHex = state.hexes[unitHexKey]
-  if (!fromHex || !fromHex.unit || fromHex.unit.moved) return []
+  if (!fromHex || !fromHex.unit || fromHex.unit.moved) return { moves: [], freeSet: {} }
 
   var unit = fromHex.unit
   var player = fromHex.owner
-  var atkStr = UNIT_DEFS[unit.level].strength
-  var moves = []
 
-  var nbrs = hexNeighborKeys(fromHex.q, fromHex.r)
-  for (var i = 0; i < nbrs.length; i++) {
-    var toKey = nbrs[i]
-    var toHex = state.hexes[toKey]
-    if (!toHex || toHex.terrain === TERRAIN_WATER) continue
+  var visited = {}   // BFS transit nodes (passable own land)
+  var validSet = {}  // all destinations
+  var freeSet  = {}  // free-reposition subset of validSet
 
-    if (toHex.owner === player) {
-      // Own territory: can move if no blocking structure
-      var blocked = toHex.structure === STRUCTURE_HUT || toHex.structure === STRUCTURE_TOWER
-      if (!blocked) {
-        if (!toHex.unit) {
-          // Empty hex (land, tree, palm, or gravestone)
-          moves.push(toKey)
-        } else if (canMergeUnits(unit.level, toHex.unit.level)) {
-          // Merge with same-level unit
-          moves.push(toKey)
+  visited[unitHexKey] = true
+  var queue = [unitHexKey]
+
+  while (queue.length > 0) {
+    var current = queue.shift()
+    var currentHex = state.hexes[current]
+
+    var nbrs = hexNeighborKeys(currentHex.q, currentHex.r)
+    for (var i = 0; i < nbrs.length; i++) {
+      var nk = nbrs[i]
+      var nh = state.hexes[nk]
+      if (!nh || nh.terrain === TERRAIN_WATER) continue
+
+      if (nh.owner === player) {
+        var blocking = nh.structure === STRUCTURE_HUT || nh.structure === STRUCTURE_TOWER
+        if (blocking) continue  // huts and towers are impassable
+
+        if (nh.unit) {
+          // Hex with a unit — only reachable as a merge target (action)
+          if (canMergeUnits(unit.level, nh.unit.level)) {
+            validSet[nk] = true
+          }
+          // Cannot transit through a hex occupied by any unit
+        } else if (nh.terrain === TERRAIN_TREE || nh.terrain === TERRAIN_PALM) {
+          // Tree/palm: can clear it (action), but cannot pass through
+          validSet[nk] = true
+        } else {
+          // Empty passable own land (terrain=land, or gravestone on land):
+          // free reposition — and BFS continues from here
+          validSet[nk] = true
+          freeSet[nk] = true
+          if (!visited[nk]) {
+            visited[nk] = true
+            queue.push(nk)
+          }
         }
-      }
-    } else {
-      // Enemy or neutral: capture if strong enough
-      if (canCapture(state, unit.level, toKey)) {
-        moves.push(toKey)
+      } else {
+        // Enemy or neutral: capture if attacker is stronger than defender (action)
+        if (canCapture(state, unit.level, nk)) {
+          validSet[nk] = true
+        }
       }
     }
   }
 
-  return moves
+  // The starting hex is never a valid destination
+  delete validSet[unitHexKey]
+  delete freeSet[unitHexKey]
+
+  return { moves: Object.keys(validSet), freeSet: freeSet }
 }
 
-// Execute a unit move from fromKey to toKey (assumed valid)
+// Execute a unit move from fromKey to toKey (assumed valid).
+// Returns true if the move was a free reposition (unit.moved stays false),
+// false if it was an action (capture, merge, clear tree/palm) that consumes the turn.
 function executeMove(state, fromKey, toKey) {
   var fromHex = state.hexes[fromKey]
   var toHex = state.hexes[toKey]
   var unit = fromHex.unit
   var player = fromHex.owner
+  var isFree = false
+  var isCapture = toHex.owner !== player  // save before mutating toHex
 
-  if (toHex.owner === player) {
-    // Move within own territory
+  if (!isCapture) {
     if (toHex.unit) {
-      // Merge
+      // Merge — action
       var newLevel = mergedLevel(unit.level, toHex.unit.level)
       toHex.unit = { level: newLevel, moved: true }
+    } else if (toHex.terrain === TERRAIN_TREE || toHex.terrain === TERRAIN_PALM) {
+      // Clear tree/palm — action
+      toHex.terrain = TERRAIN_LAND
+      toHex.unit = { level: unit.level, moved: true }
     } else {
-      // Move to empty hex — clear tree/palm/gravestone
-      if (toHex.terrain === TERRAIN_TREE || toHex.terrain === TERRAIN_PALM) {
-        toHex.terrain = TERRAIN_LAND
-      }
+      // Free reposition within own territory — clear gravestone if present
       if (toHex.structure === STRUCTURE_GRAVESTONE) {
         toHex.structure = null
       }
-      toHex.unit = { level: unit.level, moved: true }
+      toHex.unit = { level: unit.level, moved: false }
+      isFree = true
     }
   } else {
-    // Capture enemy/neutral hex
+    // Capture enemy/neutral hex — action
     toHex.unit = null       // Remove any defending unit; barons are unreachable in practice
                             // because no attacker can exceed their strength of 4
     toHex.structure = null  // Remove hut/tower/gravestone on captured hex
@@ -78,7 +119,14 @@ function executeMove(state, fromKey, toKey) {
   }
 
   fromHex.unit = null
-  recomputeTerritories(state)
+
+  // Only recalculate territories on captures (ownership changed).
+  // Merges and tree/palm clearing stay within own territory — no recompute needed.
+  if (isCapture) {
+    recomputeTerritories(state)
+  }
+
+  return isFree
 }
 
 // Buy a new peasant for a territory, placing it on the first eligible hex

@@ -50,6 +50,7 @@ function endTurn(state) {
   state.selectedHex = null
   state.selectedUnit = null
   state.validMoves = []
+  state.freeMoves = {}
   state.mode = 'normal'
 
   startTurn(state)
@@ -86,5 +87,6 @@ function undoTurn(state) {
   state.selectedHex = null
   state.selectedUnit = null
   state.validMoves = []
+  state.freeMoves = {}
   state.mode = 'normal'
 }

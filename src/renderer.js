@@ -44,11 +44,16 @@ function render(state) {
     if (wh.terrain === TERRAIN_WATER) drawWaterHex(wh)
   }
 
-  // Valid move highlights
+  // Valid move highlights — blue for free repositions, gold for action moves
   for (var vi = 0; vi < state.validMoves.length; vi++) {
     var vmk = state.validMoves[vi]
     var vmh = state.hexes[vmk]
-    if (vmh) drawOverlay(vmh, 'rgba(255,230,0,0.45)', 0)
+    if (!vmh) continue
+    if (state.freeMoves && state.freeMoves[vmk]) {
+      drawOverlay(vmh, 'rgba(100,200,255,0.40)', 0)  // light blue = free reposition
+    } else {
+      drawOverlay(vmh, 'rgba(255,210,0,0.55)', 0)    // gold = action move
+    }
   }
 
   // Selected unit highlight

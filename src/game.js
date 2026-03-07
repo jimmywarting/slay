@@ -71,6 +71,7 @@ function createGameState(numPlayers) {
     selectedHex: null,
     selectedUnit: null,
     validMoves: [],
+    freeMoves: {},
     mode: 'normal',  // 'normal' | 'buy' | 'build'
     turnSnapshot: null,
     message: '',

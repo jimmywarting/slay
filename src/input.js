@@ -32,6 +32,7 @@ function handleHexClick(state, key) {
     } else {
       state.mode = 'normal'
       state.validMoves = []
+      state.freeMoves = {}
       render(state)
       updateUI(state)
     }
@@ -53,6 +54,7 @@ function handleHexClick(state, key) {
     }
     state.mode = 'normal'
     state.validMoves = []
+    state.freeMoves = {}
     render(state)
     updateUI(state)
     return
@@ -61,10 +63,21 @@ function handleHexClick(state, key) {
   // ── Unit selected — try to move ────────────────────────────────────────────
   if (state.selectedUnit) {
     if (state.validMoves.indexOf(key) !== -1) {
-      // Execute the move
-      executeMove(state, state.selectedUnit, key)
-      state.selectedUnit = null
-      state.validMoves = []
+      var wasFree = executeMove(state, state.selectedUnit, key)
+      if (wasFree) {
+        // Free reposition — unit can still act; re-select at new position
+        state.selectedUnit = key
+        state.selectedHex = key
+        var vm = getValidMoves(state, key)
+        state.validMoves = vm.moves
+        state.freeMoves = vm.freeSet
+      } else {
+        // Action consumed the move — deselect
+        state.selectedUnit = null
+        state.selectedHex = key
+        state.validMoves = []
+        state.freeMoves = {}
+      }
       render(state)
       updateUI(state)
       return
@@ -74,7 +87,9 @@ function handleHexClick(state, key) {
     if (hex.owner === player && hex.unit && !hex.unit.moved) {
       state.selectedUnit = key
       state.selectedHex = key
-      state.validMoves = getValidMoves(state, key)
+      var vm2 = getValidMoves(state, key)
+      state.validMoves = vm2.moves
+      state.freeMoves = vm2.freeSet
       render(state)
       updateUI(state)
       return
@@ -89,11 +104,14 @@ function handleHexClick(state, key) {
   if (hex.owner === player && hex.unit && !hex.unit.moved) {
     state.selectedUnit = key
     state.selectedHex = key
-    state.validMoves = getValidMoves(state, key)
+    var vm3 = getValidMoves(state, key)
+    state.validMoves = vm3.moves
+    state.freeMoves = vm3.freeSet
   } else {
     state.selectedHex = key
     state.selectedUnit = null
     state.validMoves = []
+    state.freeMoves = {}
   }
 
   render(state)
@@ -104,6 +122,7 @@ function clearSelection(state) {
   state.selectedHex = null
   state.selectedUnit = null
   state.validMoves = []
+  state.freeMoves = {}
   state.mode = 'normal'
   render(state)
   updateUI(state)
