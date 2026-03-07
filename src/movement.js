@@ -1,5 +1,11 @@
 // Movement: valid move computation, move execution, buy unit, build tower
 
+import { hexNeighborKeys } from './hex.js'
+import { TERRAIN_WATER, TERRAIN_TREE, TERRAIN_PALM, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
+import { recomputeTerritories, getTerritoryForHex } from './territory.js'
+import { canMergeUnits, mergedLevel } from './units.js'
+import { canCapture } from './combat.js'
+
 var TOWER_COST = 10
 var PEASANT_COST = 5
 
@@ -191,3 +197,5 @@ function buildTower(state, hexKey) {
   territory.bank -= TOWER_COST
   return true
 }
+
+export { TOWER_COST, PEASANT_COST, getValidMoves, executeMove, buyUnit, buildTower }

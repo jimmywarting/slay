@@ -1,5 +1,12 @@
 // Input handling: mouse clicks on the canvas
 
+import { pixelToHex, hexKey } from './hex.js'
+import { TERRAIN_WATER, TERRAIN_LAND, STRUCTURE_TOWER } from './constants.js'
+import { getTerritoryForHex } from './territory.js'
+import { TOWER_COST, PEASANT_COST, getValidMoves, executeMove } from './movement.js'
+import { render, offsetX, offsetY } from './renderer.js'
+import { updateUI } from './game.js'
+
 function initInput(canvasEl, state) {
   canvasEl.addEventListener('click', function (e) {
     var rect = canvasEl.getBoundingClientRect()
@@ -127,3 +134,5 @@ function clearSelection(state) {
   render(state)
   updateUI(state)
 }
+
+export { initInput }

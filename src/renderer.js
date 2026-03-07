@@ -1,12 +1,18 @@
 // Renderer: draws the game map on an HTML Canvas element
 
+import { HEX_SIZE, hexToPixel, hexCorners } from './hex.js'
+import { TERRAIN_WATER, TERRAIN_TREE, TERRAIN_PALM, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
+import { UNIT_DEFS } from './units.js'
+
 var PLAYER_COLORS = ['#c0392b', '#2980b9', '#27ae60', '#d35400']
 var PLAYER_HEX_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#e67e22']
 var NEUTRAL_LAND_COLOR = '#7dbe6a'
 var WATER_COLOR = '#2471a3'
 var WATER_DEEP_COLOR = '#1a5276'
 
-var canvas, ctx, offsetX, offsetY
+var canvas, ctx
+var offsetX = 0
+var offsetY = 0
 
 function initRenderer(canvasEl) {
   canvas = canvasEl
@@ -310,3 +316,6 @@ function parseHexColor(hex) {
   var m = /^#([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
   return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : { r: 128, g: 128, b: 128 }
 }
+
+export { PLAYER_COLORS, PLAYER_HEX_COLORS, offsetX, offsetY, initRenderer, resizeCanvas, render }
+

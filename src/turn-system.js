@@ -1,5 +1,9 @@
 // Turn system: start/end turn, gravestone aging, undo
 
+import { hexNeighborKeys } from './hex.js'
+import { TERRAIN_WATER, TERRAIN_PALM, TERRAIN_TREE, STRUCTURE_GRAVESTONE } from './constants.js'
+import { computeIncome, computeUpkeep, applyBankruptcy } from './economy.js'
+
 // Save a snapshot of the current game state for undo and reset unit moved flags
 function startTurn(state) {
   state.turnSnapshot = {
@@ -90,3 +94,5 @@ function undoTurn(state) {
   state.freeMoves = {}
   state.mode = 'normal'
 }
+
+export { startTurn, endTurn, undoTurn }

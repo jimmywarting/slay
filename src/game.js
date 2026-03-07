@@ -1,5 +1,14 @@
 // Main game orchestrator: state creation, button handlers, UI updates
 
+import { PLAYER_HEX_COLORS, initRenderer, resizeCanvas, render } from './renderer.js'
+import { generateHexMap, placeStartingTerritories } from './map.js'
+import { PEASANT_COST, TOWER_COST } from './movement.js'
+import { startTurn, endTurn, undoTurn } from './turn-system.js'
+import { initInput } from './input.js'
+import { getTerritoryForHex } from './territory.js'
+import { computeIncome, computeUpkeep } from './economy.js'
+import { UNIT_DEFS } from './units.js'
+
 var NUM_PLAYERS = 2
 var PLAYER_NAMES = ['Red', 'Blue', 'Green', 'Orange']
 
@@ -279,3 +288,6 @@ function checkWinCondition(state) {
 
 // Kick everything off once the DOM is ready
 window.addEventListener('DOMContentLoaded', initGame)
+
+export { updateUI }
+
