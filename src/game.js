@@ -8,6 +8,7 @@ import { initInput } from './input.js'
 import { getTerritoryForHex } from './territory.js'
 import { computeIncome, computeUpkeep } from './economy.js'
 import { UNIT_DEFS } from './units.js'
+import { TERRAIN_WATER } from './constants.js'
 
 var NUM_PLAYERS = 2
 var PLAYER_NAMES = ['Red', 'Blue', 'Green', 'Orange']
