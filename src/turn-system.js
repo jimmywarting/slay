@@ -112,7 +112,6 @@ function spreadTrees(state) {
       var nh = hexes[nk]
       if (!nh) continue
       if (nh.terrain !== TERRAIN_LAND) continue
-      if (nh.owner !== null) continue
       if (nh.unit) continue
       if (nh.structure) continue
 

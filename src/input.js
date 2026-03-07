@@ -5,9 +5,12 @@ import { TERRAIN_WATER, TERRAIN_LAND, STRUCTURE_TOWER } from './constants.js'
 import { getTerritoryForHex } from './territory.js'
 import { TOWER_COST, PEASANT_COST, getValidMoves, executeMove } from './movement.js'
 import { render, offsetX, offsetY } from './renderer.js'
-import { updateUI } from './game.js'
 
-function initInput(canvasEl, state) {
+var updateUI = null
+
+function initInput(canvasEl, state, uiUpdater) {
+  if (typeof uiUpdater !== 'function') throw new Error('initInput: uiUpdater must be a function')
+  updateUI = uiUpdater
   canvasEl.addEventListener('click', function (e) {
     var rect = canvasEl.getBoundingClientRect()
     var px = e.clientX - rect.left - offsetX

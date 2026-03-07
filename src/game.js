@@ -22,7 +22,7 @@ function initGame() {
   initRenderer(canvasEl)
 
   gameState = createGameState(NUM_PLAYERS)
-  initInput(canvasEl, gameState)
+  initInput(canvasEl, gameState, updateUI)
 
   render(gameState)
   updateUI(gameState)
