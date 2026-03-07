@@ -152,6 +152,18 @@
       color: #7f8c8d;
       margin-bottom: 4px;
     }
+
+    #aiLog {
+      font-size: 0.72rem;
+      color: #95a5a6;
+      line-height: 1.5;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    #aiLog p {
+      margin: 2px 0;
+    }
   </style>
 </head>
 <body>
@@ -194,6 +206,11 @@
   </div>
 
   <div class="panel">
+    <div class="section-title">AI Log</div>
+    <div id="aiLog"><em style="color:#7f8c8d">AI activity will appear here.</em></div>
+  </div>
+
+  <div class="panel">
     <div class="section-title">Units</div>
     <div id="legend"></div>
   </div>
@@ -201,6 +218,7 @@
   <div class="panel">
     <div class="section-title">How to Play</div>
     <div class="key-desc">
+      You are <strong>Olive</strong>. 🤖 <strong>Forest</strong> is the AI opponent.<br>
       Click a unit to select it.<br>
       <span style="color:#64c8ff">■</span> Blue = free reposition (unit stays ready).<br>
       <span style="color:#ffd200">■</span> Gold = action (capture / merge / clear).<br>
@@ -209,7 +227,7 @@
       Merge units by strength: levels add up (max 4).<br>
       P = Peasant, S = Spearman<br>
       K = Knight, B = Baron<br>
-      🏠 = Hut (str 2) &nbsp; 🏰 = Tower (str 3)<br>
+      🏠 = Hut (str 1) &nbsp; 🏰 = Tower (str 2)<br>
       Strength must be <em>greater</em> to capture.<br>
       Pay upkeep or units die (→ gravestones).
     </div>

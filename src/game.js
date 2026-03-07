@@ -9,9 +9,11 @@ import { getTerritoryForHex } from './territory.js'
 import { computeIncome, computeUpkeep } from './economy.js'
 import { UNIT_DEFS } from './units.js'
 import { TERRAIN_WATER } from './constants.js'
+import { isAIPlayer, runAITurn, appendToLog } from './ai.js'
 
-const NUM_PLAYERS = 2  // number of active (human-controlled) players
-const NUM_TOTAL_PLAYERS = 6  // total players always present on the map
+const NUM_PLAYERS = 2       // number of active players (human + AI)
+const NUM_TOTAL_PLAYERS = 6 // total players always present on the map
+const AI_PLAYERS = [1]      // player indices that are AI-controlled
 const PLAYER_NAMES = ['Olive', 'Forest', 'Gold', 'Fern', 'Sage', 'Lime']
 
 let gameState = null
@@ -29,12 +31,15 @@ function initGame() {
   updateUI(gameState)
 
   // Button handlers
-  document.getElementById('btnEndTurn').addEventListener('click', function () {
+  document.getElementById('btnEndTurn').addEventListener('click', async function () {
     if (gameState.gameOver) return
+    appendToLog(gameState, 'Turn ' + (gameState.turn + 1) + ': ' +
+      gameState.players[gameState.activePlayer].name + ' ended their turn')
     endTurn(gameState)
     checkWinCondition(gameState)
     render(gameState)
     updateUI(gameState)
+    await runPendingAITurns()
   })
 
   document.getElementById('btnUndo').addEventListener('click', function () {
@@ -89,7 +94,10 @@ function createGameState(numActivePlayers) {
     turnSnapshot: null,
     message: '',
     gameOver: false,
-    winner: null
+    winner: null,
+    aiPlayers: AI_PLAYERS,
+    actionLog: [],
+    aiThinking: false
   }
 
   startTurn(state)
@@ -166,8 +174,12 @@ function handleBuildTower(state) {
 
 function updateUI(state) {
   const player = state.players[state.activePlayer]
+  const aiTurn = isAIPlayer(state, state.activePlayer)
 
-  document.getElementById('playerName').textContent = player.name + "'s Turn"
+  const nameLabel = aiTurn
+    ? '🤖 ' + player.name + ' (AI)' + (state.aiThinking ? ' – thinking…' : "'s Turn")
+    : player.name + "'s Turn"
+  document.getElementById('playerName').textContent = nameLabel
   document.getElementById('playerName').style.color = player.color
   document.getElementById('turnNumber').textContent = 'Turn ' + (state.turn + 1)
 
@@ -230,20 +242,26 @@ function updateUI(state) {
 
   // Button states
   const notOver = !state.gameOver
-  const activeTerritoryHasGoldForUnit = notOver && state.territories.some(function (t) {
-    return t.owner === state.activePlayer && t.bank >= PEASANT_COST
-  })
-  const activeTerritoryHasGoldForTower = notOver && state.territories.some(function (t) {
-    return t.owner === state.activePlayer && t.bank >= TOWER_COST
-  })
+  const humanTurn = notOver && !isAIPlayer(state, state.activePlayer)
+  const activeTerritoryHasGoldForUnit = humanTurn && !state.aiThinking &&
+    state.territories.some(function (t) {
+      return t.owner === state.activePlayer && t.bank >= PEASANT_COST
+    })
+  const activeTerritoryHasGoldForTower = humanTurn && !state.aiThinking &&
+    state.territories.some(function (t) {
+      return t.owner === state.activePlayer && t.bank >= TOWER_COST
+    })
 
   document.getElementById('btnBuyUnit').disabled = !activeTerritoryHasGoldForUnit
   document.getElementById('btnBuildTower').disabled = !activeTerritoryHasGoldForTower
-  document.getElementById('btnEndTurn').disabled = state.gameOver
-  document.getElementById('btnUndo').disabled = state.gameOver
+  document.getElementById('btnEndTurn').disabled = !humanTurn || !!state.aiThinking
+  document.getElementById('btnUndo').disabled = !humanTurn || !!state.aiThinking
 
   // Legend sidebar
   updateLegend(state)
+
+  // AI log panel
+  updateAILog(state)
 }
 
 function updateLegend(state) {
@@ -262,8 +280,44 @@ function updateLegend(state) {
     '<tbody>' + rows + '</tbody></table>'
 }
 
+function updateAILog(state) {
+  const el = document.getElementById('aiLog')
+  if (!el || !state.actionLog || state.actionLog.length === 0) return
+  const recent = state.actionLog.slice(-8)
+  el.innerHTML = recent.map(function (entry) {
+    return '<p>' + entry + '</p>'
+  }).join('')
+  el.scrollTop = el.scrollHeight
+}
+
 function setMessage(state, msg) {
   state.message = msg
+}
+
+// Run AI turns for as long as the active player is AI-controlled.
+// Shows "thinking..." in the UI while waiting for the LLM response.
+async function runPendingAITurns() {
+  while (!gameState.gameOver && isAIPlayer(gameState, gameState.activePlayer)) {
+    gameState.aiThinking = true
+    render(gameState)
+    updateUI(gameState)
+
+    // Small pause so the player can see the transition before the AI acts
+    await new Promise(function (resolve) { setTimeout(resolve, 500) })
+
+    await runAITurn(gameState)
+
+    gameState.aiThinking = false
+    appendToLog(gameState, 'Turn ' + (gameState.turn + 1) + ': ' +
+      gameState.players[gameState.activePlayer].name + ' (AI) ended their turn')
+    endTurn(gameState)
+    checkWinCondition(gameState)
+    render(gameState)
+    updateUI(gameState)
+
+    // Brief pause after AI moves so the human can review
+    await new Promise(function (resolve) { setTimeout(resolve, 300) })
+  }
 }
 
 // A player wins when every non-water hex on the island belongs to them.
