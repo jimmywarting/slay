@@ -76,6 +76,7 @@ function createGameState(numActivePlayers) {
 
   const state = {
     players: players,
+    numActivePlayers: numActivePlayers,
     hexes: hexes,
     territories: territories,
     turn: 0,

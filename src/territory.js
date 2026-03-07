@@ -10,6 +10,7 @@ function recomputeTerritories(state) {
   const hexes = state.hexes
   const visited = {}
   const newTerritories = []
+  const numActivePlayers = state.numActivePlayers != null ? state.numActivePlayers : state.players.length
 
   const allKeys = Object.keys(hexes)
 
@@ -83,8 +84,9 @@ function recomputeTerritories(state) {
       bank = totalBank
     }
 
-    // If territory has ≥ 2 hexes but no hut, place one on the first eligible hex
-    if (!hutHexKey && component.length >= 2) {
+    // If territory has ≥ 2 hexes but no hut, place one on the first eligible hex.
+    // Never give huts to inactive players (index >= numActivePlayers).
+    if (!hutHexKey && component.length >= 2 && startHex.owner < numActivePlayers) {
       for (let pi = 0; pi < component.length; pi++) {
         const ph = hexes[component[pi]]
         if (ph && ph.terrain === TERRAIN_LAND && !ph.unit && !ph.structure) {
