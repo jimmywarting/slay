@@ -71,9 +71,11 @@ function addRandomTerrain(hexes) {
 // multi-seed BFS flood fill.  Each player gets SEEDS_PER_PLAYER random starting
 // hexes so the resulting regions are scattered across the whole map rather than
 // forming a single contiguous zone.  After the flood fill, connected components
-// are identified and each ≥2-hex component receives a hut.  Every player is
-// guaranteed at least one hut at the start.
-function placeStartingTerritories(hexes) {
+// are identified and each ≥2-hex component for an *active* player receives a hut.
+// Active players (index < numActivePlayers) get huts + a starting bank.
+// Inactive players (index >= numActivePlayers) have their colored land drawn on
+// the map but receive no huts and no starting gold.
+function placeStartingTerritories(hexes, numActivePlayers) {
   // ── Step 1: collect and shuffle all non-water land hexes ──────────────────
   const allLandKeys = Object.keys(hexes).filter(k => hexes[k].terrain !== TERRAIN_WATER)
   shuffleArray(allLandKeys)
@@ -116,9 +118,11 @@ function placeStartingTerritories(hexes) {
   // ── Step 4: find connected components ─────────────────────────────────────
   const territories = findConnectedComponents(hexes)
 
-  // ── Step 5: place hut in every ≥2-hex component ───────────────────────────
+  // ── Step 5: place hut in every ≥2-hex component owned by an active player ──
   for (let ti = 0; ti < territories.length; ti++) {
     const territory = territories[ti]
+    // Inactive players' territories are drawn but get no huts
+    if (territory.owner >= numActivePlayers) continue
     if (territory.hexKeys.length < 2) continue
 
     // Prefer a plain land hex (no tree) for the hut
@@ -139,11 +143,9 @@ function placeStartingTerritories(hexes) {
     territory.hutHexKey = hutKey
   }
 
-  // ── Step 6: guarantee each player has at least one hut ────────────────────
-  // If a player has no territory with a hut, find their largest single-hex
-  // territory and steal one adjacent non-water hex from a neighbour to make
-  // a 2-hex connected component, then place the hut.
-  for (let p = 0; p < NUM_PLAYERS; p++) {
+  // ── Step 6: guarantee each *active* player has at least one hut ─────────────
+  // Inactive players intentionally have no huts.
+  for (let p = 0; p < numActivePlayers; p++) {
     const hasHut = territories.some(t => t.owner === p && t.hutHexKey !== null)
     if (hasHut) continue
 
@@ -193,8 +195,9 @@ function placeStartingTerritories(hexes) {
   }
 
   // ── Step 7: assign bank and add terrain decorations ───────────────────────
+  // Only active players start with gold; inactive players have bank 0.
   for (let ti = 0; ti < territories.length; ti++) {
-    territories[ti].bank = 5  // every territory (all 6 players) starts with gold
+    territories[ti].bank = territories[ti].owner < numActivePlayers ? 5 : 0
   }
 
   addRandomTerrain(hexes) // place trees/palms after huts so they don't cover them

@@ -72,7 +72,7 @@ function createGameState(numActivePlayers) {
   }
 
   const hexes = generateHexMap()
-  const territories = placeStartingTerritories(hexes)
+  const territories = placeStartingTerritories(hexes, numActivePlayers)
 
   const state = {
     players: players,
