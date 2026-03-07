@@ -182,6 +182,52 @@ function gaussianNoise (stddev) {
   return stddev * Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2)
 }
 
+// ── Pure-JS forward pass ──────────────────────────────────────────────────────
+//
+// Runs inference for the 48→32(ReLU)→16(ReLU)→24(linear) network entirely in
+// plain JavaScript, with no dependency on TensorFlow.js.  This allows self-play
+// games to be executed inside Web Workers where TF.js is not available.
+//
+// Weight layout matches the order returned by model.getWeights() / dataSync():
+//   W0[48×32=1536]  b0[32]  W1[32×16=512]  b1[16]  W2[16×24=384]  b2[24]
+// Kernel shape [in, out] in row-major: kernel[i * out + j]
+//
+const _L0_IN = STATE_DIM, _L0_OUT = 32
+const _L1_IN = 32,        _L1_OUT = 16
+const _L2_IN = 16,        _L2_OUT = ACTION_DIM
+
+const _W0_OFF = 0
+const _B0_OFF = _W0_OFF + _L0_IN * _L0_OUT          // 1536
+const _W1_OFF = _B0_OFF + _L0_OUT                    // 1568
+const _B1_OFF = _W1_OFF + _L1_IN * _L1_OUT          // 2080
+const _W2_OFF = _B1_OFF + _L1_OUT                    // 2096
+const _B2_OFF = _W2_OFF + _L2_IN * _L2_OUT          // 2480
+
+function selectActionPure (flatWeights, features) {
+  // Layer 0: [STATE_DIM] → [32] with ReLU
+  const h0 = new Float32Array(_L0_OUT)
+  for (let j = 0; j < _L0_OUT; j++) {
+    let s = flatWeights[_B0_OFF + j]
+    for (let i = 0; i < _L0_IN; i++) s += features[i] * flatWeights[_W0_OFF + i * _L0_OUT + j]
+    h0[j] = s > 0 ? s : 0
+  }
+  // Layer 1: [32] → [16] with ReLU
+  const h1 = new Float32Array(_L1_OUT)
+  for (let j = 0; j < _L1_OUT; j++) {
+    let s = flatWeights[_B1_OFF + j]
+    for (let i = 0; i < _L1_IN; i++) s += h0[i] * flatWeights[_W1_OFF + i * _L1_OUT + j]
+    h1[j] = s > 0 ? s : 0
+  }
+  // Layer 2: [16] → [ACTION_DIM] linear — return argmax directly
+  let best = 0, bestV = -Infinity
+  for (let j = 0; j < _L2_OUT; j++) {
+    let s = flatWeights[_B2_OFF + j]
+    for (let i = 0; i < _L2_IN; i++) s += h1[i] * flatWeights[_W2_OFF + i * _L2_OUT + j]
+    if (s > bestV) { bestV = s; best = j }
+  }
+  return best
+}
+
 // ── State encoding ────────────────────────────────────────────────────────────
 //
 // Features (48 total):
@@ -514,7 +560,44 @@ function runSelfPlayGame (agents) {
   for (let i = 0; i < n; i++) agents[i].gamesPlayed++
 }
 
-// Run agent's turn in the main game (read-only fitness accumulation, no mutation).
+// Run a complete self-play game using pure-JS inference (no TF.js).
+// agentWeights: array of Float32Array, one per player (length = numActivePlayers).
+// Returns a Float64Array of fitness deltas indexed by player slot.
+function runSelfPlayGameWeights (agentWeights) {
+  const n = agentWeights.length
+  const fitnessDeltas = new Float64Array(n)
+  const state = createHeadlessState(n)
+  let turn = 0
+  while (!state.gameOver && turn < MAX_TURNS_PER_GAME) {
+    const player  = state.activePlayer
+    const weights = agentWeights[player]
+    for (let step = 0; step < MAX_ACTIONS_PER_TURN; step++) {
+      const features  = encodeState(state, player)
+      const actionIdx = selectActionPure(weights, features)
+      if (actionIdx === ACT_END_TURN) break
+      const reward = executeActionRL(state, actionIdx)
+      fitnessDeltas[player] += reward
+      const unmoved = getUnmovedUnits(state, player)
+      const canBuy  = state.territories.some(function (t) {
+        return t.owner === player && t.bank >= PEASANT_COST
+      })
+      if (unmoved.length === 0 && !canBuy) break
+    }
+    endTurn(state)
+    checkWinConditionHeadless(state)
+    turn++
+  }
+  // Win bonus
+  if (state.winner !== null && state.winner < n) fitnessDeltas[state.winner] += R_WIN
+  // Per-hex ownership bonus (partial credit)
+  for (const k in state.hexes) {
+    const h = state.hexes[k]
+    if (h.terrain !== TERRAIN_WATER && h.owner !== null && h.owner < n) {
+      fitnessDeltas[h.owner] += 0.005
+    }
+  }
+  return fitnessDeltas
+}
 function runNeuralAgentTurn (state, agent) {
   const player = state.activePlayer
   for (let step = 0; step < MAX_ACTIONS_PER_TURN; step++) {
@@ -614,11 +697,14 @@ export {
   STATE_DIM,
   ACTION_DIM,
   STORAGE_KEY_BEST,
+  selectActionPure,
   encodeState,
   executeActionRL,
   getUnmovedUnits,
   createHeadlessState,
+  checkWinConditionHeadless,
   runSelfPlayGame,
+  runSelfPlayGameWeights,
   runNeuralAgentTurn,
   getActiveNeuralAgent,
   evolveAgents,

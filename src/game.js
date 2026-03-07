@@ -423,7 +423,8 @@ function updateTrainingUI(stats) {
     'Games <b>' + stats.totalGames + '</b><br>' +
     'Best fitness: <b>' + (stats.bestFitness || 0).toFixed(2) + '</b> ' +
     '(all-time: ' + (stats.bestFitnessEver || 0).toFixed(2) + ')<br>' +
-    (stats.mutRate ? 'Mutation rate: ' + (stats.mutRate * 100).toFixed(1) + '%' : '')
+    (stats.mutRate ? 'Mutation rate: ' + (stats.mutRate * 100).toFixed(1) + '%' : '') +
+    (stats.numWorkers ? ' | Workers: ' + stats.numWorkers : '')
 }
 
 export { updateUI }
