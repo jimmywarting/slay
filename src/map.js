@@ -1,11 +1,9 @@
 // Map generation: hexagonal island with terrain and player starting areas
 
-var MAP_RADIUS = 7
+import { hexKey, hexNeighborKeys, hexDistance } from './hex.js'
+import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_HUT } from './constants.js'
 
-var TERRAIN_WATER = 'water'
-var TERRAIN_LAND = 'land'
-var TERRAIN_TREE = 'tree'
-var TERRAIN_PALM = 'palm'
+var MAP_RADIUS = 7
 
 // Generate the base hex grid
 function generateHexMap() {
@@ -151,3 +149,5 @@ function seededRng(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
 }
+
+export { generateHexMap, placeStartingTerritories }

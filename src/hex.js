@@ -72,3 +72,6 @@ function hexCorners(cx, cy) {
   }
   return pts
 }
+
+export { HEX_SIZE, hexKey, parseHexKey, hexNeighborKeys, hexDistance, hexToPixel, pixelToHex, hexCorners }
+

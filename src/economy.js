@@ -1,5 +1,8 @@
 // Economy: income, upkeep, and bankruptcy
 
+import { TERRAIN_LAND, STRUCTURE_GRAVESTONE } from './constants.js'
+import { UNIT_DEFS } from './units.js'
+
 // Count income-generating hexes in a territory (plain land only)
 function computeIncome(state, territory) {
   var income = 0
@@ -34,3 +37,5 @@ function applyBankruptcy(state, territory) {
   }
   territory.bank = 0
 }
+
+export { computeIncome, computeUpkeep, applyBankruptcy }

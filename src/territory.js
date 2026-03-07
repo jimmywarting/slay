@@ -1,8 +1,8 @@
 // Territory detection, management, and defensive zone calculations
 
-var STRUCTURE_HUT = 'hut'
-var STRUCTURE_TOWER = 'tower'
-var STRUCTURE_GRAVESTONE = 'gravestone'
+import { hexNeighborKeys } from './hex.js'
+import { TERRAIN_WATER, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
+import { UNIT_DEFS } from './units.js'
 
 // Recompute all territories from the current hex ownership map.
 // Finds connected components per player and reconciles banks via hut keys.
@@ -133,10 +133,10 @@ function getBankForHut(territories, hutKey) {
 }
 
 // Find the territory object that contains a given hex key
-function getTerritoryForHex(state, hexKey) {
+function getTerritoryForHex(state, key) {
   var ts = state.territories
   for (var i = 0; i < ts.length; i++) {
-    if (ts[i].hexKeys.indexOf(hexKey) !== -1) return ts[i]
+    if (ts[i].hexKeys.indexOf(key) !== -1) return ts[i]
   }
   return null
 }
@@ -171,3 +171,5 @@ function getHexDefenseStrength(state, targetKey) {
 
   return maxDef
 }
+
+export { recomputeTerritories, getBankForHut, getTerritoryForHex, getHexDefenseStrength }

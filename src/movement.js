@@ -9,12 +9,12 @@ var PEASANT_COST = 5
 //   freeSet — subset of moves that are free repositions (no move cost)
 //
 // Free repositions (unit.moved stays false):
-//   own empty land hex (terrain=land, no unit, no hut/tower, gravestone OK)
-//   huts and towers are passable for BFS transit but not valid landing hexes
+//   own empty land hex (terrain=land, gravestone OK)
+//   own units, huts and towers are passable for BFS transit but not valid landing hexes
 //
 // Action moves (unit.moved becomes true):
 //   own hex with tree/palm      → clears it
-//   own hex with same-level unit → merges
+//   own hex with a friendly unit → merges (if levels allow)
 //   enemy/neutral hex            → capture (requires attacker > defender strength)
 function getValidMoves(state, unitHexKey) {
   var fromHex = state.hexes[unitHexKey]
@@ -42,11 +42,14 @@ function getValidMoves(state, unitHexKey) {
 
       if (nh.owner === player) {
         if (nh.unit) {
-          // Hex with a unit — only reachable as a merge target (action)
+          // Own unit hex: passable for BFS transit; also a merge target if levels allow
           if (canMergeUnits(unit.level, nh.unit.level)) {
             validSet[nk] = true
           }
-          // Cannot transit through a hex occupied by any unit
+          if (!visited[nk]) {
+            visited[nk] = true
+            queue.push(nk)
+          }
         } else if (nh.structure === STRUCTURE_HUT || nh.structure === STRUCTURE_TOWER) {
           // Huts and towers: passable for BFS transit but not a valid landing hex
           if (!visited[nk]) {

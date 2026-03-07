@@ -20,3 +20,5 @@ function mergedLevel(level1, level2) {
   if (!canMergeUnits(level1, level2)) return null
   return level1 + level2
 }
+
+export { UNIT_DEFS, canMergeUnits, mergedLevel }
