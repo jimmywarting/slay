@@ -46,8 +46,10 @@ function endTurn(state) {
   // Age gravestones (may convert to tree or palm)
   ageGravestones(state)
 
-  // Spread trees and palms
-  spreadTrees(state)
+  // Spread trees and palms once per round (after the last player's turn)
+  if (player === state.players.length - 1) {
+    spreadTrees(state)
+  }
 
   // Advance to next player
   state.activePlayer = (state.activePlayer + 1) % state.players.length
