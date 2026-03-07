@@ -26,6 +26,10 @@ function resetMovedFlags(state) {
 
 // End the current player's turn: apply income/upkeep, age gravestones, advance
 function endTurn(state) {
+  // Clear the moved flag on all units belonging to the ending player so they
+  // no longer render with the "used" opacity badge during the next player's turn.
+  resetMovedFlags(state)
+
   const player = state.activePlayer
 
   // Apply income and upkeep for every territory owned by this player
