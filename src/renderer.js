@@ -67,27 +67,27 @@ function render(state) {
     if (sh) drawOverlay(sh, 'rgba(255,255,255,0.5)', 2)
   }
 
-  // Buy mode target highlight
+  // Buy mode target highlight — only hexes in the selected territory
   if (state.mode === 'buy') {
-    const bkeys = Object.keys(state.hexes)
+    const buyTerritory = findTerritoryForHex(state, state.selectedHex)
+    const bkeys = buyTerritory ? buyTerritory.hexKeys : []
     for (let bi = 0; bi < bkeys.length; bi++) {
       const bh = state.hexes[bkeys[bi]]
-      if (bh.owner === state.activePlayer &&
-          bh.terrain === TERRAIN_LAND &&
-          !bh.unit && !bh.structure) {
+      if (!bh) continue
+      if (bh.terrain === TERRAIN_LAND && !bh.unit && !bh.structure) {
         drawOverlay(bh, 'rgba(0,220,100,0.35)', 0)
       }
     }
   }
 
-  // Build tower mode target highlight
+  // Build tower mode target highlight — only hexes in the selected territory
   if (state.mode === 'build') {
-    const tkeys = Object.keys(state.hexes)
+    const buildTerritory = findTerritoryForHex(state, state.selectedHex)
+    const tkeys = buildTerritory ? buildTerritory.hexKeys : []
     for (let ti = 0; ti < tkeys.length; ti++) {
       const th = state.hexes[tkeys[ti]]
-      if (th.owner === state.activePlayer &&
-          th.terrain === TERRAIN_LAND &&
-          !th.unit && !th.structure) {
+      if (!th) continue
+      if (th.terrain === TERRAIN_LAND && !th.unit && !th.structure) {
         drawOverlay(th, 'rgba(150,100,255,0.35)', 0)
       }
     }
