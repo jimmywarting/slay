@@ -3,7 +3,7 @@
 import { HEX_SIZE, hexToPixel, hexCorners, hexNeighborKeys } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_TREE, TERRAIN_PALM, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
 import { UNIT_DEFS } from './units.js'
-import { PEASANT_COST, getBuyPlacementHexes } from './movement.js'
+import { getBuyPlacementHexes } from './movement.js'
 
 const PLAYER_COLORS     = ['#736c03', '#158a17', '#dbc447', '#02792f', '#ada740', '#94c655']
 const PLAYER_HEX_COLORS = ['#736c03', '#158a17', '#dbc447', '#02792f', '#ada740', '#94c655']
@@ -69,17 +69,22 @@ function render(state) {
   }
 
   // Buy mode target highlight — own-territory hexes (green / yellow-green for trees)
-  // and adjacent undefended hexes (orange = parachute drop)
+  // merge targets (teal) and adjacent undefended hexes (orange = parachute drop)
   if (state.mode === 'buy') {
     const buyTerritory = findTerritoryForHex(state, state.selectedHex)
     if (buyTerritory && buyTerritory.owner === state.activePlayer) {
-      const { ownHexes, adjacentHexes } = getBuyPlacementHexes(state, buyTerritory)
+      const buyLevel = state.buyLevel !== undefined ? state.buyLevel : 1
+      const { ownHexes, mergeHexes, adjacentHexes } = getBuyPlacementHexes(state, buyTerritory, buyLevel)
       for (let bi = 0; bi < ownHexes.length; bi++) {
         const bh = state.hexes[ownHexes[bi]]
         if (!bh) continue
         const isTree = bh.terrain === TERRAIN_TREE || bh.terrain === TERRAIN_PALM
         // Yellow-green for tree/palm (will be cleared); green for plain land / gravestone
         drawOverlay(bh, isTree ? 'rgba(180,220,0,0.45)' : 'rgba(0,220,100,0.35)', 0)
+      }
+      for (let mi = 0; mi < mergeHexes.length; mi++) {
+        const mh = state.hexes[mergeHexes[mi]]
+        if (mh) drawOverlay(mh, 'rgba(0,180,220,0.45)', 0)  // teal = merge
       }
       for (let ai = 0; ai < adjacentHexes.length; ai++) {
         const ah = state.hexes[adjacentHexes[ai]]

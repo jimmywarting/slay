@@ -3,10 +3,10 @@
 
 const UNIT_DEFS = [
   null,
-  { level: 1, name: 'Peasant',  upkeep: 2,  strength: 1, cost: 5,    symbol: '🧑‍🌾' },
-  { level: 2, name: 'Spearman', upkeep: 6,  strength: 2, cost: null, symbol: '🧑‍🎤' },
-  { level: 3, name: 'Knight',   upkeep: 18, strength: 3, cost: null, symbol: '🧑‍🚒' },
-  { level: 4, name: 'Baron',    upkeep: 54, strength: 4, cost: null, symbol: '🫅'  }
+  { level: 1, name: 'Peasant',  upkeep: 2,  strength: 1, cost: 5,  symbol: '🧑‍🌾' },
+  { level: 2, name: 'Spearman', upkeep: 6,  strength: 2, cost: 10, symbol: '🧑‍🎤' },
+  { level: 3, name: 'Knight',   upkeep: 18, strength: 3, cost: 15, symbol: '🧑‍🚒' },
+  { level: 4, name: 'Baron',    upkeep: 54, strength: 4, cost: 20, symbol: '🫅'  }
 ];
 
 // Can two units of given levels be merged together?

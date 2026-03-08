@@ -21,7 +21,7 @@ This document is the **complete, authoritative specification** of the Slay-like 
 13. [Unit Movement](#13-unit-movement)
 14. [Capturing Hexes](#14-capturing-hexes)
 15. [Unit Merging](#15-unit-merging)
-16. [Buying a Peasant](#16-buying-a-peasant)
+16. [Buying Units](#16-buying-units)
 17. [Building a Tower](#17-building-a-tower)
 18. [Gravestone Lifecycle](#18-gravestone-lifecycle)
 19. [Tree and Palm Spreading](#19-tree-and-palm-spreading)
@@ -151,14 +151,14 @@ Structures occupy the `structure` field of a hex (at most one per hex).
 
 ## 6. Units
 
-Only **Peasants** can be bought directly; higher-level units are obtained by merging.
+All four unit types can be bought directly (see §16).
 
 | Level | Name      | Symbol | Strength | Upkeep | Buy cost |
 | ----- | --------- | ------ | -------- | ------ | -------- |
 | 1     | Peasant   | 🧑‍🌾     | 1        | 2 gold | 5 gold   |
-| 2     | Spearman  | 🧑‍🎤     | 2        | 6 gold | —        |
-| 3     | Knight    | 🧑‍🚒     | 3        | 18 gold| —        |
-| 4     | Baron     | 🫅      | 4        | 54 gold| —        |
+| 2     | Spearman  | 🧑‍🎤     | 2        | 6 gold | 10 gold  |
+| 3     | Knight    | 🧑‍🚒     | 3        | 18 gold| 15 gold  |
+| 4     | Baron     | 🫅      | 4        | 54 gold| 20 gold  |
 
 Units store:
 
@@ -424,29 +424,38 @@ A merge is an **action move**:
 
 ---
 
-## 16. Buying a Peasant
+## 16. Buying Units
 
-**Cost**: 5 gold, deducted from the territory's bank.
+Any of the four unit types can be bought directly.  The cost is deducted from the territory's bank.
+
+| Unit     | Level | Buy cost |
+| -------- | ----- | -------- |
+| Peasant  | 1     | 5 gold   |
+| Spearman | 2     | 10 gold  |
+| Knight   | 3     | 15 gold  |
+| Baron    | 4     | 20 gold  |
+
+> **Design note**: These costs reflect buying a Peasant (5 g) and immediately upgrading it — Spearman costs the same as two Peasants merged, a Knight as three, and a Baron as four.
 
 **Placement priority** (the game auto-picks the first available hex in this order):
 
 1. **Own plain land** — empty land hex (`terrain = 'land'`) with no unit and no structure.
 2. **Own gravestone** — empty land hex with a gravestone structure.  The gravestone is cleared on placement.
 3. **Own tree or palm** — the terrain is cleared to land upon placement.
-4. **Own mergeable unit** — a hex inside the territory whose unit level + 1 ≤ 4 (i.e. level ≤ 3).  The Peasant is merged into the existing unit.
-5. **Undefended adjacent hex** (parachute drop) — a non-water, non-own hex that borders the territory and has no unit, and whose defense strength is 0 (i.e. `canCapture(state, 1, hex) === true`).
+4. **Own mergeable unit** — a hex inside the territory whose unit level + buyLevel ≤ 4.  The bought unit is merged into the existing unit.
+5. **Undefended adjacent hex** (parachute drop) — a non-water, non-own hex that borders the territory and has no unit, and where `canCapture(state, buyLevel, hex) === true`.
 
-> **Chained buy rule**: territory hexes that already hold a **non-mergeable** unit (level 4 Baron, or any unit whose level would exceed 4 when combined with a Peasant) are **not** valid landing squares, but they **do** still expose their adjacent enemy hexes as parachute-drop candidates.  This allows a player to buy multiple peasants in sequence and place them in a straight line into enemy territory: each placed unit's occupied hex continues to reveal the next enemy hex as a valid drop zone.
+> **Chained buy rule**: territory hexes that already hold a **non-mergeable** unit are **not** valid landing squares, but they **do** still expose their adjacent enemy hexes as parachute-drop candidates.  This allows a player to buy multiple units in sequence and place them in a straight line into enemy territory.
 
 **Placement result**:
 
 | Type                             | `unit.moved` after placement                     | Territory effect |
 | -------------------------------- | ------------------------------------------------ | ---------------- |
-| Own plain land                   | `false` (can act this turn)                      | bank −= 5 |
-| Own gravestone (cleared)         | `true` (acted)                                   | bank −= 5 |
-| Own tree or palm (cleared)       | `true` (acted)                                   | bank −= 5 |
-| Own unit (merge)                 | Inherits existing unit's `moved` flag            | bank −= 5 |
-| Parachute drop                   | `true` (already acted)                           | bank −= 5; hex captured; `recomputeTerritories` |
+| Own plain land                   | `false` (can act this turn)                      | bank −= cost |
+| Own gravestone (cleared)         | `true` (acted)                                   | bank −= cost |
+| Own tree or palm (cleared)       | `true` (acted)                                   | bank −= cost |
+| Own unit (merge)                 | Inherits existing unit's `moved` flag            | bank −= cost |
+| Parachute drop                   | `true` (already acted)                           | bank −= cost; hex captured; `recomputeTerritories` |
 
 ---
 

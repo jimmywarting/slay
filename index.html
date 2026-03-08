@@ -110,11 +110,14 @@
     }
     #btnUndo:hover:not(:disabled) { background: #ca6f1e; }
 
-    #btnBuyUnit {
+    #btnBuyPeasant, #btnBuySpearman, #btnBuyKnight, #btnBuyBaron {
       background: #f39c12;
       color: #fff;
     }
-    #btnBuyUnit:hover:not(:disabled) { background: #d68910; }
+    #btnBuyPeasant:hover:not(:disabled)  { background: #d68910; }
+    #btnBuySpearman:hover:not(:disabled) { background: #d68910; }
+    #btnBuyKnight:hover:not(:disabled)   { background: #d68910; }
+    #btnBuyBaron:hover:not(:disabled)    { background: #d68910; }
 
     #btnBuildTower {
       background: #8e44ad;
@@ -250,7 +253,10 @@
 
   <div class="panel">
     <div class="btn-group">
-      <button id="btnBuyUnit">Buy Peasant (5g)</button>
+      <button id="btnBuyPeasant">Buy Peasant (5g)</button>
+      <button id="btnBuySpearman">Buy Spearman (10g)</button>
+      <button id="btnBuyKnight">Buy Knight (15g)</button>
+      <button id="btnBuyBaron">Buy Baron (20g)</button>
       <button id="btnBuildTower">Build Tower (10g)</button>
     </div>
   </div>
@@ -307,9 +313,11 @@
       🏠 = Hut (str 1) &nbsp; 🏰 = Tower (str 2)<br>
       Strength must be <em>greater</em> to capture.<br>
       Pay upkeep or units die (→ gravestones).<br>
-      <span style="color:#00dc64">■</span> Green = buy peasant here.<br>
+      <span style="color:#00dc64">■</span> Green = place unit here.<br>
       <span style="color:#b4dc00">■</span> Yellow-green = clears the tree.<br>
-      <span style="color:#ff8c00">■</span> Orange = parachute to undefended hex.
+      <span style="color:#00b4dc">■</span> Teal = merge with existing unit.<br>
+      <span style="color:#ff8c00">■</span> Orange = parachute to undefended hex.<br>
+      Buy any unit directly: Peasant 5g, Spearman 10g, Knight 15g, Baron 20g.
     </div>
   </div>
 

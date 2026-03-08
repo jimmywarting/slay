@@ -4,7 +4,7 @@ import { pixelToHex, hexKey } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
 import { getTerritoryForHex, recomputeTerritories } from './territory.js'
 import { TOWER_COST, PEASANT_COST, getBuyPlacementHexes, getValidMoves, executeMove } from './movement.js'
-import { mergedLevel } from './units.js'
+import { mergedLevel, UNIT_DEFS } from './units.js'
 import { render, offsetX, offsetY } from './renderer.js'
 
 let updateUI = null
@@ -30,22 +30,24 @@ function handleHexClick(state, key) {
 
   const player = state.activePlayer
 
-  // ── Buy-mode: place a new peasant ──────────────────────────────────────────
+  // ── Buy-mode: place a newly-bought unit ────────────────────────────────────
   if (state.mode === 'buy') {
     // The paying territory was recorded in state.selectedHex when entering buy mode
     const buyTerritory = getTerritoryForHex(state, state.selectedHex)
+    const buyLevel = state.buyLevel !== undefined ? state.buyLevel : 1
+    const buyCost = UNIT_DEFS[buyLevel].cost
 
-    if (buyTerritory && buyTerritory.owner === player && buyTerritory.bank >= PEASANT_COST) {
-      const { ownHexes, mergeHexes, adjacentHexes } = getBuyPlacementHexes(state, buyTerritory)
+    if (buyTerritory && buyTerritory.owner === player && buyTerritory.bank >= buyCost) {
+      const { ownHexes, mergeHexes, adjacentHexes } = getBuyPlacementHexes(state, buyTerritory, buyLevel)
       const isOwnTarget      = ownHexes.indexOf(key) !== -1
       const isMergeTarget    = mergeHexes.indexOf(key) !== -1
       const isAdjacentTarget = adjacentHexes.indexOf(key) !== -1
 
       if (isOwnTarget || isMergeTarget || isAdjacentTarget) {
         if (isMergeTarget) {
-          // Merge: new Peasant (level 1, unmoved) absorbed by existing unit.
+          // Merge: bought unit (unmoved) absorbed by existing unit.
           // Merged unit is moved only if the existing unit was already moved.
-          const newLevel = mergedLevel(1, hex.unit.level)
+          const newLevel = mergedLevel(buyLevel, hex.unit.level)
           hex.unit = { level: newLevel, moved: hex.unit.moved }
         } else {
           const isCapture = hex.owner !== player
@@ -55,10 +57,10 @@ function handleHexClick(state, key) {
           hex.structure = null
           if (isCapture) hex.owner = player
           // Clearing tree/palm or gravestone is an action (moved); plain own land is fresh
-          hex.unit = { level: 1, moved: isCapture || wasTreeOrPalm || wasGravestone }
+          hex.unit = { level: buyLevel, moved: isCapture || wasTreeOrPalm || wasGravestone }
           if (isCapture) recomputeTerritories(state)
         }
-        buyTerritory.bank -= PEASANT_COST
+        buyTerritory.bank -= buyCost
       }
     }
 

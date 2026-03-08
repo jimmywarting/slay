@@ -3,27 +3,25 @@
 import { hexNeighborKeys } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_TREE, TERRAIN_PALM, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
 import { recomputeTerritories, getTerritoryForHex } from './territory.js'
-import { canMergeUnits, mergedLevel } from './units.js'
+import { canMergeUnits, mergedLevel, UNIT_DEFS } from './units.js'
 import { canCapture } from './combat.js'
 
-// Returns valid hexes where a newly-bought Peasant (level 1) can be placed for
-// the given territory.  Three categories are returned:
+// Returns valid hexes where a newly-bought unit of the given level can be placed
+// for the given territory.  Three categories are returned:
 //
 //   ownHexes      – hexes inside the territory that have no unit:
 //                   plain land (priority 1), gravestone (priority 2), tree/palm (priority 3).
 //                   Placing on a gravestone or tree/palm marks the unit as moved.
 //
-//   mergeHexes    – hexes inside the territory that hold a unit the Peasant can
-//                   merge with (level 1 + existing ≤ 4, i.e. existing level ≤ 3).
+//   mergeHexes    – hexes inside the territory that hold a unit this bought unit can
+//                   merge with (buyLevel + existing ≤ 4).
 //                   The merged unit's moved flag inherits from the existing unit.
 //
-//   adjacentHexes – non-owned, non-water hexes on the territory border where a
-//                   Peasant can be "parachuted" in as a capture.  The same
-//                   capture-strength rule applies: Peasant strength (1) must be
-//                   strictly greater than the hex's defense strength (0), so only
-//                   completely undefended hexes qualify — no enemy hut, no
-//                   enemy tower, no enemy unit on or adjacent to the target hex.
-function getBuyPlacementHexes(state, territory) {
+//   adjacentHexes – non-owned, non-water hexes on the territory border where the
+//                   unit can be "parachuted" in as a capture.  The unit's strength
+//                   must be strictly greater than the hex's defense strength.
+function getBuyPlacementHexes(state, territory, level) {
+  if (level === undefined) level = 1
   const player = territory.owner
   const plainHexes     = []   // empty own land, no structure (priority 1)
   const gravHexes      = []   // empty own land + gravestone  (priority 2)
@@ -48,8 +46,8 @@ function getBuyPlacementHexes(state, territory) {
       } else if (h.terrain === TERRAIN_TREE || h.terrain === TERRAIN_PALM) {
         treeHexes.push(k)
       }
-    } else if (canMergeUnits(1, h.unit.level)) {
-      // Own unit that can absorb a Peasant (existing level ≤ 3)
+    } else if (canMergeUnits(level, h.unit.level)) {
+      // Own unit that can absorb the bought unit
       mergeHexes.push(k)
     }
 
@@ -65,11 +63,8 @@ function getBuyPlacementHexes(state, territory) {
       if (!nh || nh.terrain === TERRAIN_WATER) continue
       if (nh.owner === player) continue
       if (nh.unit) continue  // can't land on a unit
-      // Use the same defense check as regular movement: Peasant (level 1) must
-      // be strictly stronger than the target hex's effective defense strength.
-      // This correctly blocks: enemy hut (def=1), enemy tower (def=2), hexes
-      // adjacent to enemy units/structures that raise their neighbors' defense.
-      if (canCapture(state, 1, nk)) adjacentHexes.push(nk)
+      // The bought unit must be strictly stronger than the target hex's defense.
+      if (canCapture(state, level, nk)) adjacentHexes.push(nk)
     }
   }
 
@@ -224,15 +219,18 @@ function executeMove(state, fromKey, toKey) {
   return isFree
 }
 
-// Buy a new peasant for a territory.
+// Buy a unit of the given level for a territory.
+// Costs: Peasant 5g, Spearman 10g, Knight 15g, Baron 20g.
 // Placement priority: plain land → gravestone → tree/palm → mergeable own unit → adjacent undefended hex.
-// Returns true if a peasant was successfully placed.
-function buyUnit(state, territoryIndex) {
+// Returns true if the unit was successfully placed.
+function buyUnit(state, territoryIndex, level) {
+  if (level === undefined) level = 1
   const territory = state.territories[territoryIndex]
   if (!territory || territory.owner !== state.activePlayer) return false
-  if (territory.bank < PEASANT_COST) return false
+  const cost = UNIT_DEFS[level].cost
+  if (territory.bank < cost) return false
 
-  const { ownHexes, mergeHexes, adjacentHexes } = getBuyPlacementHexes(state, territory)
+  const { ownHexes, mergeHexes, adjacentHexes } = getBuyPlacementHexes(state, territory, level)
   const candidate = ownHexes[0] || mergeHexes[0] || adjacentHexes[0]
   if (!candidate) return false
 
@@ -240,26 +238,26 @@ function buyUnit(state, territoryIndex) {
   const isCapture = ch.owner !== state.activePlayer
 
   if (ch.unit) {
-    // Merge: new Peasant (level 1, unmoved) absorbs into existing unit.
+    // Merge: bought unit (unmoved) absorbs into existing unit.
     // Merged unit is moved only if the existing unit was already moved.
-    const newLevel = mergedLevel(1, ch.unit.level)
+    const newLevel = mergedLevel(level, ch.unit.level)
     ch.unit = { level: newLevel, moved: ch.unit.moved }
   } else if (isCapture) {
     // Parachute drop — capture the hex, unit has expended its move
     if (ch.terrain === TERRAIN_TREE || ch.terrain === TERRAIN_PALM) ch.terrain = TERRAIN_LAND
     ch.structure = null
     ch.owner = state.activePlayer
-    ch.unit  = { level: 1, moved: true }
+    ch.unit  = { level: level, moved: true }
   } else {
     // Own territory — clearing tree/palm or gravestone counts as an action
     const wasTreeOrPalm = ch.terrain === TERRAIN_TREE || ch.terrain === TERRAIN_PALM
     const wasGravestone = ch.structure === STRUCTURE_GRAVESTONE
     if (wasTreeOrPalm) ch.terrain = TERRAIN_LAND
     ch.structure = null
-    ch.unit = { level: 1, moved: wasTreeOrPalm || wasGravestone }
+    ch.unit = { level: level, moved: wasTreeOrPalm || wasGravestone }
   }
 
-  territory.bank -= PEASANT_COST
+  territory.bank -= cost
   if (isCapture) recomputeTerritories(state)
   return true
 }

@@ -53,10 +53,18 @@ function initGame() {
     updateUI(gameState)
   })
 
-  document.getElementById('btnBuyUnit').addEventListener('click', function () {
-    if (gameState.gameOver) return
-    handleBuyUnit(gameState)
-  })
+  const BUY_BUTTON_IDS = ['btnBuyPeasant', 'btnBuySpearman', 'btnBuyKnight', 'btnBuyBaron']
+  for (let lvl = 1; lvl <= 4; lvl++) {
+    ;(function (level) {
+      const btn = document.getElementById(BUY_BUTTON_IDS[level - 1])
+      if (btn) {
+        btn.addEventListener('click', function () {
+          if (gameState.gameOver) return
+          handleBuyUnit(gameState, level)
+        })
+      }
+    })(lvl)
+  }
 
   document.getElementById('btnBuildTower').addEventListener('click', function () {
     if (gameState.gameOver) return
@@ -147,6 +155,7 @@ function createGameState(numActivePlayers) {
     validMoves: [],
     freeMoves: {},
     mode: 'normal',  // 'normal' | 'buy' | 'build'
+    buyLevel: 1,     // unit level being bought in 'buy' mode
     turnSnapshot: null,
     message: '',
     gameOver: false,
@@ -162,7 +171,11 @@ function createGameState(numActivePlayers) {
 
 // ── Button handlers ───────────────────────────────────────────────────────────
 
-function handleBuyUnit(state) {
+function handleBuyUnit(state, level) {
+  if (level === undefined) level = 1
+  const unitDef = UNIT_DEFS[level]
+  const cost = unitDef.cost
+
   // Find the territory for the selected hex (or any territory of active player)
   let territory = null
   if (state.selectedHex) {
@@ -174,34 +187,33 @@ function handleBuyUnit(state) {
   if (!territory) {
     for (let i = 0; i < state.territories.length; i++) {
       const t = state.territories[i]
-      if (t.owner === state.activePlayer && t.bank >= PEASANT_COST) {
+      if (t.owner === state.activePlayer && t.bank >= cost) {
         territory = t
         break
       }
     }
   }
 
-  if (!territory || territory.bank < PEASANT_COST) {
-    setMessage(state, 'Not enough gold to buy a peasant (costs ' + PEASANT_COST + ').')
+  if (!territory || territory.bank < cost) {
+    setMessage(state, 'Not enough gold to buy a ' + unitDef.name + ' (costs ' + cost + ').')
     updateUI(state)
     return
   }
 
   // Guard: make sure there is at least one valid placement hex
-  const placement = getBuyPlacementHexes(state, territory)
-  if (placement.ownHexes.length === 0 && placement.adjacentHexes.length === 0) {
-    setMessage(state, 'No valid hex to place a peasant — all adjacent hexes are defended.')
+  const placement = getBuyPlacementHexes(state, territory, level)
+  if (placement.ownHexes.length === 0 && placement.mergeHexes.length === 0 && placement.adjacentHexes.length === 0) {
+    setMessage(state, 'No valid hex to place a ' + unitDef.name + ' — all adjacent hexes are defended.')
     updateUI(state)
     return
   }
 
-  // Enter buy mode: player clicks a highlighted hex to place the peasant.
-  // Green = own land/gravestone, yellow-green = tree (gets cleared),
-  // orange = undefended adjacent hex (parachute drop).
+  // Enter buy mode: player clicks a highlighted hex to place the unit.
   state.mode = 'buy'
+  state.buyLevel = level
   state.selectedHex = territory.hutHexKey
   state.validMoves = []
-  setMessage(state, 'Click a highlighted hex to place the peasant.')
+  setMessage(state, 'Click a highlighted hex to place the ' + unitDef.name + '.')
   render(state)
   updateUI(state)
 }
@@ -316,16 +328,24 @@ function updateUI(state) {
   // Button states
   const notOver = !state.gameOver
   const humanTurn = notOver && !isAIPlayer(state, state.activePlayer)
-  const activeTerritoryHasGoldForUnit = humanTurn && !state.aiThinking &&
-    state.territories.some(function (t) {
-      return t.owner === state.activePlayer && t.bank >= PEASANT_COST
-    })
+
+  // Enable/disable each buy button based on whether the player can afford that unit
+  const BUY_BTN_IDS = ['btnBuyPeasant', 'btnBuySpearman', 'btnBuyKnight', 'btnBuyBaron']
+  for (let lvl = 1; lvl <= 4; lvl++) {
+    const cost = UNIT_DEFS[lvl].cost
+    const canAfford = humanTurn && !state.aiThinking &&
+      state.territories.some(function (t) {
+        return t.owner === state.activePlayer && t.bank >= cost
+      })
+    const btn = document.getElementById(BUY_BTN_IDS[lvl - 1])
+    if (btn) btn.disabled = !canAfford
+  }
+
   const activeTerritoryHasGoldForTower = humanTurn && !state.aiThinking &&
     state.territories.some(function (t) {
       return t.owner === state.activePlayer && t.bank >= TOWER_COST
     })
 
-  document.getElementById('btnBuyUnit').disabled = !activeTerritoryHasGoldForUnit
   document.getElementById('btnBuildTower').disabled = !activeTerritoryHasGoldForTower
   document.getElementById('btnEndTurn').disabled = !humanTurn || !!state.aiThinking
   document.getElementById('btnUndo').disabled = !humanTurn || !!state.aiThinking
