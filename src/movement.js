@@ -29,17 +29,22 @@ function getBuyPlacementHexes(state, territory) {
   for (let i = 0; i < territory.hexKeys.length; i++) {
     const k = territory.hexKeys[i]
     const h = state.hexes[k]
-    if (!h || h.unit) continue
+    if (!h) continue
 
-    if (h.terrain === TERRAIN_LAND) {
-      // Plain empty land or gravestone — both valid, gravestone gets cleared
-      if (!h.structure || h.structure === STRUCTURE_GRAVESTONE) plainHexes.push(k)
-      // Huts and towers are NOT valid placement squares
-    } else if (h.terrain === TERRAIN_TREE || h.terrain === TERRAIN_PALM) {
-      treeHexes.push(k)
+    // Only consider hexes without a unit as valid landing squares inside the territory.
+    if (!h.unit) {
+      if (h.terrain === TERRAIN_LAND) {
+        // Plain empty land or gravestone — both valid, gravestone gets cleared
+        if (!h.structure || h.structure === STRUCTURE_GRAVESTONE) plainHexes.push(k)
+        // Huts and towers are NOT valid placement squares
+      } else if (h.terrain === TERRAIN_TREE || h.terrain === TERRAIN_PALM) {
+        treeHexes.push(k)
+      }
     }
 
-    // Collect border hexes for parachute placement
+    // Always check neighbors for parachute-drop targets, even when this hex
+    // has a unit (e.g. a just-placed unit with moved=true).  The unit occupies
+    // the hex but the hex still borders enemy land that could be captured.
     const nbrs = hexNeighborKeys(h.q, h.r)
     for (let j = 0; j < nbrs.length; j++) {
       const nk = nbrs[j]
