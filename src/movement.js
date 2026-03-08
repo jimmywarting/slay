@@ -74,13 +74,14 @@ const PEASANT_COST = 5
 //   freeSet — subset of moves that are free repositions (no move cost)
 //
 // Free repositions (unit.moved stays false):
-//   own empty land hex (terrain=land, gravestone OK)
+//   own empty land hex (terrain=land, no structure)
 //   own units, huts and towers are passable for BFS transit but not valid landing hexes
 //
 // Action moves (unit.moved becomes true):
-//   own hex with tree/palm      → clears it
-//   own hex with a friendly unit → merges (if levels allow)
-//   enemy/neutral hex            → capture (requires attacker > defender strength)
+//   own hex with gravestone        → clears it
+//   own hex with tree/palm         → clears it
+//   own hex with a friendly unit   → merges (if levels allow)
+//   enemy/neutral hex              → capture (requires attacker > defender strength)
 function getValidMoves(state, unitHexKey) {
   const fromHex = state.hexes[unitHexKey]
   if (!fromHex || !fromHex.unit || fromHex.unit.moved) return { moves: [], freeSet: {} }
@@ -125,10 +126,12 @@ function getValidMoves(state, unitHexKey) {
           // Tree/palm: can clear it (action), but cannot pass through
           validSet[nk] = true
         } else {
-          // Empty passable own land (terrain=land, or gravestone on land):
-          // free reposition — and BFS continues from here
+          // Empty own land hex — BFS continues from here.
+          // Clearing a gravestone is an action; plain empty land is a free reposition.
           validSet[nk] = true
-          freeSet[nk] = true
+          if (!nh.structure) {
+            freeSet[nk] = true
+          }
           if (!visited[nk]) {
             visited[nk] = true
             queue.push(nk)
@@ -174,11 +177,12 @@ function executeMove(state, fromKey, toKey) {
       // Clear tree/palm — action
       toHex.terrain = TERRAIN_LAND
       toHex.unit = { level: unit.level, moved: true }
+    } else if (toHex.structure === STRUCTURE_GRAVESTONE) {
+      // Clearing a gravestone is always an action — unit is considered moved
+      toHex.structure = null
+      toHex.unit = { level: unit.level, moved: true }
     } else {
-      // Free reposition within own territory — clear gravestone if present
-      if (toHex.structure === STRUCTURE_GRAVESTONE) {
-        toHex.structure = null
-      }
+      // Free reposition within own territory
       toHex.unit = { level: unit.level, moved: false }
       isFree = true
     }

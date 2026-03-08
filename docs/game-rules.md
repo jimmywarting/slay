@@ -340,7 +340,8 @@ Starting from the unit's hex, a BFS is performed through the **own territory**:
 
 | Encountered hex                              | BFS continues? | Valid destination? | Move type         |
 | -------------------------------------------- | -------------- | ------------------ | ----------------- |
-| Own land/gravestone (empty)                  | ✅ yes          | ✅ yes              | **Free reposition** |
+| Own land (empty, no structure)               | ✅ yes          | ✅ yes              | **Free reposition** |
+| Own gravestone hex                           | ✅ yes          | ✅ yes              | **Clear** (action)  |
 | Own hut or tower (no unit)                   | ✅ yes          | ❌ no               | Transit only       |
 | Own unit (mergeable: level1+level2 ≤ 4)      | ✅ yes          | ✅ yes              | **Merge** (action) |
 | Own unit (not mergeable)                     | ✅ yes          | ❌ no               | Transit only       |
@@ -352,15 +353,14 @@ A unit whose `moved` flag is already `true` has **no valid moves** (excluded at 
 
 ### Free repositions
 
-Moving to an **own empty land/gravestone hex** is a **free reposition**:
+Moving to an **own empty land hex (no structure)** is a **free reposition**:
 
 * `unit.moved` stays `false` after the move.
 * The BFS continues from the destination, allowing the same unit to be moved again within the same turn (as long as the next destination is also a free reposition).
-* Gravestones are cleared when a unit repositions onto them.
 
 ### Action moves
 
-Any move to a tree/palm, a merge target, or an enemy/neutral hex is an **action**:
+Any move to a gravestone, a tree/palm, a merge target, or an enemy/neutral hex is an **action**:
 
 * `unit.moved` is set to `true` after the move.
 * The unit cannot move again this turn.
@@ -369,7 +369,8 @@ Any move to a tree/palm, a merge target, or an enemy/neutral hex is an **action*
 
 | Destination type        | Result                                                                       | `unit.moved` |
 | ----------------------- | ---------------------------------------------------------------------------- | ------------ |
-| Own empty land          | Unit relocated; gravestone cleared if present                                | `false`      |
+| Own empty land          | Unit relocated                                                               | `false`      |
+| Own gravestone          | Gravestone cleared; unit placed there                                        | `true`       |
 | Own tree/palm           | Terrain cleared to land; unit placed there                                   | `true`       |
 | Own unit (merge)        | Both units replaced by one at combined level; `moved = either source moved`  | `true` if either was moved |
 | Enemy/neutral hex       | Hex owner changed; existing unit/structure/gravestone destroyed; terrain set to land if tree/palm | `true` |
