@@ -7,6 +7,8 @@ import { computeIncome, computeUpkeep } from './economy.js'
 import { UNIT_DEFS } from './units.js'
 import { TERRAIN_LAND, TERRAIN_WATER, STRUCTURE_HUT, STRUCTURE_TOWER } from './constants.js'
 import { hexNeighborKeys } from './hex.js'
+import { getActiveNeuralAgent, runNeuralAgentTurn } from './ai-rl.js'
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 // Returns true if the given player index is AI-controlled in this game state.
@@ -17,6 +19,16 @@ function isAIPlayer(state, playerId) {
 // Run a full AI turn: think, execute actions.
 // The caller is responsible for calling endTurn() afterwards.
 async function runAITurn(state) {
+  // 1. Prefer the trained neural agent (loaded from localStorage)
+  const neuralAgent = getActiveNeuralAgent()
+  if (neuralAgent) {
+    appendToLog(state, 'Turn ' + (state.turn + 1) + ': ' +
+      state.players[state.activePlayer].name + ' [RL gen ' + neuralAgent.generation + ']')
+    runNeuralAgentTurn(state, neuralAgent)
+    return
+  }
+
+  // 2. Greedy heuristic fallback (used until a model has been trained)
   runGreedyTurn(state)
 }
 

@@ -10,6 +10,7 @@ import { computeIncome, computeUpkeep } from './economy.js'
 import { UNIT_DEFS } from './units.js'
 import { TERRAIN_WATER } from './constants.js'
 import { isAIPlayer, runAITurn, appendToLog } from './ai.js'
+import { startTraining, stopTraining, resetTraining, isTrainingActive, getTrainingStats } from './train.js'
 
 const NUM_PLAYERS = 2       // number of active players (human + AI)
 const NUM_TOTAL_PLAYERS = 6 // total players always present on the map
@@ -68,6 +69,39 @@ function initGame() {
 
   const btnWatchAI = document.getElementById('btnWatchAI')
   const btnNewGame = document.getElementById('btnNewGame')
+
+  // Training panel buttons
+  const btnTrain      = document.getElementById('btnTrain')
+  const btnStopTrain  = document.getElementById('btnStopTrain')
+  const btnResetTrain = document.getElementById('btnResetTrain')
+
+  if (btnTrain) {
+    btnTrain.addEventListener('click', function () {
+      btnTrain.disabled     = true
+      btnStopTrain.disabled = false
+      startTraining(function (stats) { updateTrainingUI(stats) })
+    })
+  }
+
+  if (btnStopTrain) {
+    btnStopTrain.disabled = true
+    btnStopTrain.addEventListener('click', function () {
+      stopTraining()
+      btnTrain.disabled     = false
+      btnStopTrain.disabled = true
+      updateTrainingUI(getTrainingStats())
+    })
+  }
+
+  if (btnResetTrain) {
+    btnResetTrain.addEventListener('click', function () {
+      if (!confirm('Reset all training data? The AI will start learning from scratch.')) return
+      resetTraining()
+      btnTrain.disabled     = false
+      btnStopTrain.disabled = true
+      updateTrainingUI(null)
+    })
+  }
 
   if (btnWatchAI) {
     btnWatchAI.addEventListener('click', function () {
@@ -441,6 +475,39 @@ function checkWinCondition(state) {
 
 // Kick everything off once the DOM is ready
 window.addEventListener('DOMContentLoaded', initGame)
+
+// Update TF.js readiness status once all external scripts have loaded.
+window.addEventListener('load', function () {
+  const statusEl = document.getElementById('trainStatus')
+  if (!statusEl) return
+  if (typeof globalThis.tf !== 'undefined') {
+    statusEl.textContent = 'Ready to train. Click ▶ Start.'
+  } else {
+    statusEl.textContent = 'TF.js failed to load – training unavailable.'
+  }
+})
+
+function updateTrainingUI(stats) {
+  const statusEl   = document.getElementById('trainStatus')
+  const progressEl = document.getElementById('trainProgress')
+  if (!statusEl || !progressEl) return
+
+  if (!stats) {
+    statusEl.textContent  = 'No training data. Click ▶ Start to begin.'
+    progressEl.textContent = ''
+    return
+  }
+
+  const running = isTrainingActive()
+  statusEl.textContent = running ? '⚙ Training…' : '⏸ Paused'
+  progressEl.innerHTML =
+    'Gen <b>' + stats.generation + '</b> | ' +
+    'Games <b>' + stats.totalGames + '</b><br>' +
+    'Best fitness: <b>' + (stats.bestFitness || 0).toFixed(2) + '</b> ' +
+    '(all-time: ' + (stats.bestFitnessEver || 0).toFixed(2) + ')<br>' +
+    (stats.mutRate    ? 'Mutation σ: '  + (stats.mutRate * 100).toFixed(1) + '%' : '') +
+    (stats.numWorkers ? ' | Workers: ' + stats.numWorkers : '')
+}
 
 
 export { updateUI }
