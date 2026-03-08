@@ -169,7 +169,7 @@ function drawHexContent(state, hex, hexKey, cx, cy) {
     // Show 🚩 on the active player's hut when the territory can afford a new Peasant
     if (hex.owner === state.activePlayer) {
       const territory = findTerritoryForHex(state, hexKey)
-      if (territory && territory.bank >= PEASANT_COST) {
+      if (territory && territory.bank >= UNIT_DEFS[1].cost) {
         const flagSize = Math.round(HEX_SIZE * 0.45)
         drawEmoji('🚩', cx + HEX_SIZE * 0.32, cy - HEX_SIZE * 0.38, flagSize)
       }
