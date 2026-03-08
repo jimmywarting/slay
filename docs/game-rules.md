@@ -430,18 +430,23 @@ A merge is an **action move**:
 
 **Placement priority** (the game auto-picks the first available hex in this order):
 
-1. **Own plain land or gravestone** — empty land hex (`terrain = 'land'`) with no unit and either no structure or a gravestone structure.  Gravestones are cleared on placement.  Huts and towers on land hexes are **not** valid.
-2. **Own tree or palm** — the terrain is cleared to land upon placement.
-3. **Undefended adjacent hex** (parachute drop) — a non-water, non-own hex that borders the territory and has no unit, and whose defense strength is 0 (i.e. `canCapture(state, 1, hex) === true`).
+1. **Own plain land** — empty land hex (`terrain = 'land'`) with no unit and no structure.
+2. **Own gravestone** — empty land hex with a gravestone structure.  The gravestone is cleared on placement.
+3. **Own tree or palm** — the terrain is cleared to land upon placement.
+4. **Own mergeable unit** — a hex inside the territory whose unit level + 1 ≤ 4 (i.e. level ≤ 3).  The Peasant is merged into the existing unit.
+5. **Undefended adjacent hex** (parachute drop) — a non-water, non-own hex that borders the territory and has no unit, and whose defense strength is 0 (i.e. `canCapture(state, 1, hex) === true`).
 
-> **Chained buy rule**: territory hexes that already hold a unit (e.g. a just-placed peasant with `moved = true`) are **not** valid landing squares, but they **do** still expose their adjacent enemy hexes as parachute-drop candidates.  This allows a player to buy multiple peasants in sequence and place them in a straight line into enemy territory: each placed unit's occupied hex continues to reveal the next enemy hex as a valid drop zone.
+> **Chained buy rule**: territory hexes that already hold a **non-mergeable** unit (level 4 Baron, or any unit whose level would exceed 4 when combined with a Peasant) are **not** valid landing squares, but they **do** still expose their adjacent enemy hexes as parachute-drop candidates.  This allows a player to buy multiple peasants in sequence and place them in a straight line into enemy territory: each placed unit's occupied hex continues to reveal the next enemy hex as a valid drop zone.
 
 **Placement result**:
 
-| Type             | `unit.moved` after placement | Territory effect            |
-| ---------------- | ---------------------------- | --------------------------- |
-| Inside own land  | `false` (can act this turn)  | bank −= 5                   |
-| Parachute drop   | `true` (already acted)       | bank −= 5; hex captured; `recomputeTerritories` |
+| Type                             | `unit.moved` after placement                     | Territory effect |
+| -------------------------------- | ------------------------------------------------ | ---------------- |
+| Own plain land                   | `false` (can act this turn)                      | bank −= 5 |
+| Own gravestone (cleared)         | `true` (acted)                                   | bank −= 5 |
+| Own tree or palm (cleared)       | `true` (acted)                                   | bank −= 5 |
+| Own unit (merge)                 | Inherits existing unit's `moved` flag            | bank −= 5 |
+| Parachute drop                   | `true` (already acted)                           | bank −= 5; hex captured; `recomputeTerritories` |
 
 ---
 
@@ -456,7 +461,7 @@ A merge is an **action move**:
 * `hex.unit === null`
 * `hex.structure === null`
 
-A tower cannot be built on a tree, palm, or a hex that already has any structure (including a gravestone).
+A tower can ONLY be placed on own empty land. A hex that has a tree, palm, structure (including a gravestone) or a unit is NOT a valid place to build at.
 
 ---
 

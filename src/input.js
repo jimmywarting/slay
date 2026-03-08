@@ -1,9 +1,10 @@
 // Input handling: mouse clicks on the canvas
 
 import { pixelToHex, hexKey } from './hex.js'
-import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_TOWER } from './constants.js'
+import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
 import { getTerritoryForHex, recomputeTerritories } from './territory.js'
 import { TOWER_COST, PEASANT_COST, getBuyPlacementHexes, getValidMoves, executeMove } from './movement.js'
+import { mergedLevel } from './units.js'
 import { render, offsetX, offsetY } from './renderer.js'
 
 let updateUI = null
@@ -35,20 +36,29 @@ function handleHexClick(state, key) {
     const buyTerritory = getTerritoryForHex(state, state.selectedHex)
 
     if (buyTerritory && buyTerritory.owner === player && buyTerritory.bank >= PEASANT_COST) {
-      const { ownHexes, adjacentHexes } = getBuyPlacementHexes(state, buyTerritory)
+      const { ownHexes, mergeHexes, adjacentHexes } = getBuyPlacementHexes(state, buyTerritory)
       const isOwnTarget      = ownHexes.indexOf(key) !== -1
+      const isMergeTarget    = mergeHexes.indexOf(key) !== -1
       const isAdjacentTarget = adjacentHexes.indexOf(key) !== -1
 
-      if (isOwnTarget || isAdjacentTarget) {
-        const isCapture = hex.owner !== player
-        // Clear tree/palm or gravestone on destination
-        if (hex.terrain === TERRAIN_TREE || hex.terrain === TERRAIN_PALM) hex.terrain = TERRAIN_LAND
-        hex.structure = null
-        if (isCapture) hex.owner = player
-        // Parachuted-in peasant has used its move; own-territory peasant is fresh
-        hex.unit = { level: 1, moved: isCapture }
+      if (isOwnTarget || isMergeTarget || isAdjacentTarget) {
+        if (isMergeTarget) {
+          // Merge: new Peasant (level 1, unmoved) absorbed by existing unit.
+          // Merged unit is moved only if the existing unit was already moved.
+          const newLevel = mergedLevel(1, hex.unit.level)
+          hex.unit = { level: newLevel, moved: hex.unit.moved }
+        } else {
+          const isCapture = hex.owner !== player
+          const wasTreeOrPalm = hex.terrain === TERRAIN_TREE || hex.terrain === TERRAIN_PALM
+          const wasGravestone = hex.structure === STRUCTURE_GRAVESTONE
+          if (wasTreeOrPalm) hex.terrain = TERRAIN_LAND
+          hex.structure = null
+          if (isCapture) hex.owner = player
+          // Clearing tree/palm or gravestone is an action (moved); plain own land is fresh
+          hex.unit = { level: 1, moved: isCapture || wasTreeOrPalm || wasGravestone }
+          if (isCapture) recomputeTerritories(state)
+        }
         buyTerritory.bank -= PEASANT_COST
-        if (isCapture) recomputeTerritories(state)
       }
     }
 
