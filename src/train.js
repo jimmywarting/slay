@@ -246,6 +246,8 @@ function resetTraining () {
   stopTraining()
   try { localStorage.removeItem('slay_rl_best_v1') } catch (_) {}
   try { localStorage.removeItem('slay_rl_pop_v1')  } catch (_) {}
+  try { localStorage.removeItem('slay_rl_best_v2') } catch (_) {}
+  try { localStorage.removeItem('slay_rl_pop_v2')  } catch (_) {}
   population        = null
   generation        = 0
   totalGames        = 0

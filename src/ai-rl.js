@@ -17,7 +17,7 @@ import { startTurn, endTurn } from './turn-system.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const STATE_DIM  = 48   // feature-vector length  (8 global + 15 territory + 20 unit + 5 tactical)
+const STATE_DIM  = 75   // feature-vector length  (8 global + 42 territory + 20 unit + 5 tactical)
 const ACTION_DIM = 24   // fixed action-type count (see ACTION_* below)
 
 // action-index ranges
@@ -29,15 +29,16 @@ const ACT_EXPAND_BASE = 12      // 5: capture neutral/inactive with unit slot 0-
 const ACT_MERGE_BASE  = 17      // 4: merge with unit slot 0-3
 const ACT_REPOS_BASE  = 21      // 3: free-reposition unit slot 0-2
 
-const MAX_UNIT_SLOTS = 5
-const MAX_TERR_SLOTS = 3
+const MAX_UNIT_SLOTS  = 5
+const MAX_TERR_SLOTS  = 3  // territory slots in the action space (buy/build actions)
+const MAX_TERR_ENCODE = 6  // territory slots encoded in the state vector (all territories visible)
 const MAP_RADIUS = MAP_RADIUS_DEFAULT  // max radius; used for coordinate normalisation in encodeState
 
 // Fitness rewards / penalties
 const R_WIN              = 10.0   // winning clearly dominates all other signals
-const R_WIN_SPEED        =  5.0   // extra bonus for winning early; scaled by (1 - turn/MAX_TURNS),
-                                   // so winning at turn 0 adds +5, at turn 100 adds +2.5, at the
-                                   // last possible turn adds ~0.  Rewards faster victories.
+const R_WIN_SPEED        =  5.0   // extra bonus for winning early; scaled by (1 - turn/MAX_TURNS_PER_GAME),
+                                   // so winning at turn 1 (earliest possible) adds ≈+5, at turn 100
+                                   // adds +2.5, at the last possible turn adds ~0.  Rewards faster victories.
 const R_CAPTURE_HUT      =  2.0   // capturing enemy hut destroys their territory — highest per-action reward
 const R_CAPTURE_ENEMY    =  0.8   // capturing a non-hut enemy hex
 const R_CAPTURE_NEUTRAL  =  0.2   // capturing inactive/neutral hex (less competitive than enemy)
@@ -55,11 +56,14 @@ const P_IDLE_TURN        = -0.15  // ended turn while units were idle or a buy w
 
 const MAX_ACTIONS_PER_TURN = 25
 const MAX_TURNS_PER_GAME   = 200
-const TOTAL_WEIGHTS        = 48 * 32 + 32 + 32 * 16 + 16 + 16 * 24 + 24  // 2504
+const TOTAL_WEIGHTS        = 75 * 32 + 32 + 32 * 16 + 16 + 16 * 24 + 24  // 3368
 const FIXED_NUM_ACTIVE     = 2   // training games are always 2-player: candidate (slot 0) vs opponent (slot 1)
 
-const STORAGE_KEY_BEST = 'slay_rl_best_v1'
-const STORAGE_KEY_POP  = 'slay_rl_pop_v1'
+const STORAGE_KEY_BEST = 'slay_rl_best_v2'  // v2: expanded territory encoding (75-input network).
+                                               // v1 keys (48-input) are left untouched so older
+                                               // browsers still load the game; v2 simply initialises
+                                               // a fresh population if no v2 data exists.
+const STORAGE_KEY_POP  = 'slay_rl_pop_v2'   // v2: incompatible with v1 (48-input) saved weights
 
 // ── TF.js global accessor ─────────────────────────────────────────────────────
 
@@ -197,7 +201,7 @@ function gaussianNoise (stddev) {
 // games to be executed inside Web Workers where TF.js is not available.
 //
 // Weight layout matches the order returned by model.getWeights() / dataSync():
-//   W0[48×32=1536]  b0[32]  W1[32×16=512]  b1[16]  W2[16×24=384]  b2[24]
+//   W0[75×32=2400]  b0[32]  W1[32×16=512]  b1[16]  W2[16×24=384]  b2[24]
 // Kernel shape [in, out] in row-major: kernel[i * out + j]
 //
 const _L0_IN = STATE_DIM, _L0_OUT = 32
@@ -205,11 +209,11 @@ const _L1_IN = 32,        _L1_OUT = 16
 const _L2_IN = 16,        _L2_OUT = ACTION_DIM
 
 const _W0_OFF = 0
-const _B0_OFF = _W0_OFF + _L0_IN * _L0_OUT          // 1536
-const _W1_OFF = _B0_OFF + _L0_OUT                    // 1568
-const _B1_OFF = _W1_OFF + _L1_IN * _L1_OUT          // 2080
-const _W2_OFF = _B1_OFF + _L1_OUT                    // 2096
-const _B2_OFF = _W2_OFF + _L2_IN * _L2_OUT          // 2480
+const _B0_OFF = _W0_OFF + _L0_IN * _L0_OUT          // 2400
+const _W1_OFF = _B0_OFF + _L0_OUT                    // 2432
+const _B1_OFF = _W1_OFF + _L1_IN * _L1_OUT          // 2944
+const _W2_OFF = _B1_OFF + _L1_OUT                    // 2960
+const _B2_OFF = _W2_OFF + _L2_IN * _L2_OUT          // 3344
 
 function selectActionPure (flatWeights, features) {
   // Layer 0: [STATE_DIM] → [32] with ReLU
@@ -236,23 +240,68 @@ function selectActionPure (flatWeights, features) {
   return best
 }
 
+// ── Territory awareness helpers ───────────────────────────────────────────────
+//
+// Returns true if `hex` is owned by an active opponent of `playerId`.
+function _isActiveEnemy (state, hex, playerId) {
+  return hex !== null && hex !== undefined &&
+         hex.owner !== null && hex.owner !== undefined &&
+         hex.owner !== playerId &&
+         hex.owner < state.numActivePlayers
+}
+
+// Returns true if any hex in `terr` is adjacent to an active-enemy hex.
+// Used both for sorting and for encoding the per-territory threat feature.
+function _terrHasEnemyNeighbor (state, terr, playerId) {
+  for (let ki = 0; ki < terr.hexKeys.length; ki++) {
+    const h = state.hexes[terr.hexKeys[ki]]
+    if (!h) continue
+    const nbrs = hexNeighborKeys(h.q, h.r)
+    for (let ni = 0; ni < nbrs.length; ni++) {
+      if (_isActiveEnemy(state, state.hexes[nbrs[ni]], playerId)) return true
+    }
+  }
+  return false
+}
+
+// Returns the player's territories sorted by strategic priority so that
+// slot 0 is always the most urgent territory.  Both encodeState() and
+// executeActionRL() MUST use this same ordering so that territory slot indices
+// are consistent between the observation the network sees and the action it picks.
+//
+// Sort key (descending priority):
+//   1. Threatened (has an active-enemy neighbour) → act on these first
+//   2. Bank descending → richer territories have more actionable options
+function _sortedTerritories (state, playerId) {
+  const terrs = []
+  for (let t = 0; t < state.territories.length; t++) {
+    if (state.territories[t].owner === playerId) terrs.push(state.territories[t])
+  }
+  terrs.sort(function (a, b) {
+    const at = _terrHasEnemyNeighbor(state, a, playerId) ? 1 : 0
+    const bt = _terrHasEnemyNeighbor(state, b, playerId) ? 1 : 0
+    if (at !== bt) return bt - at   // threatened first
+    return b.bank - a.bank           // then richer first
+  })
+  return terrs
+}
+
 // ── State encoding ────────────────────────────────────────────────────────────
 //
-// Features (48 total):
-//   [0..7]   global (8)         : turn, myHex, enemyHex, income, upkeep, bank, numTerr, numUnits
-//   [8..22]  territory (3×5=15) : hexCount, bank, income, upkeep, unitCount per slot
-//   [23..42] units (5×4=20)     : level, qNorm, rNorm, hasEnemyNeighbor per slot
-//   [43..47] tactical (5)       : canBuy, canBuild, relStrength, borderPressure, unmovedUnits
+// Features (75 total):
+//   [0..7]   global (8)          : turn, myHex, enemyHex, income, upkeep, bank, numTerr, numUnits
+//   [8..49]  territory (6×7=42)  : per slot: hexCount, bank, income, upkeep, unitCount,
+//                                   hasEnemyNeighbor, hasTower
+//                                   sorted by strategic priority: threatened first, then bank desc
+//   [50..69] units (5×4=20)      : level, qNorm, rNorm, hasEnemyNeighbor per slot
+//   [70..74] tactical (5)        : canBuy, canBuild, relStrength, borderPressure, unmovedUnits
 
 function encodeState (state, playerId) {
   const f = new Float32Array(STATE_DIM)
   let i = 0
 
-  // Gather territories for this player
-  const myTerrs = []
-  for (let t = 0; t < state.territories.length; t++) {
-    if (state.territories[t].owner === playerId) myTerrs.push(state.territories[t])
-  }
+  // Gather territories sorted by strategic priority
+  const myTerrs = _sortedTerritories(state, playerId)
 
   // Count hexes
   let myHexCount = 0
@@ -291,22 +340,27 @@ function encodeState (state, playerId) {
   f[i++] = Math.min(myTerrs.length / 6, 1)
   f[i++] = Math.min(totalUnits / 10, 1)
 
-  // ── territory slots (3×5=15) ──
-  for (let ti = 0; ti < MAX_TERR_SLOTS; ti++) {
+  // ── territory slots (6×7=42) — all territories visible, sorted by priority ──
+  for (let ti = 0; ti < MAX_TERR_ENCODE; ti++) {
     const t = myTerrs[ti]
     if (t) {
       let numUnitsInT = 0
+      let towerInT    = 0
       for (let ki = 0; ki < t.hexKeys.length; ki++) {
         const h = state.hexes[t.hexKeys[ki]]
-        if (h && h.unit) numUnitsInT++
+        if (!h) continue
+        if (h.unit) numUnitsInT++
+        if (h.structure === STRUCTURE_TOWER) towerInT = 1
       }
       f[i++] = Math.min(t.hexKeys.length / 10, 1)
       f[i++] = Math.min(t.bank / 50, 1)
       f[i++] = Math.min(computeIncome(state, t) / 10, 1)
       f[i++] = Math.min(computeUpkeep(state, t) / 10, 1)
       f[i++] = Math.min(numUnitsInT / 5, 1)
+      f[i++] = _terrHasEnemyNeighbor(state, t, playerId) ? 1 : 0
+      f[i++] = towerInT
     } else {
-      i += 5  // zero-pad missing territory slot
+      i += 7  // zero-pad missing territory slot
     }
   }
 
@@ -318,8 +372,7 @@ function encodeState (state, playerId) {
       let hasEnemyNeighbor = 0
       const nbrs = hexNeighborKeys(u.hex.q, u.hex.r)
       for (let ni = 0; ni < nbrs.length; ni++) {
-        const nh = state.hexes[nbrs[ni]]
-        if (nh && nh.owner !== playerId && nh.owner !== null && nh.owner < state.numActivePlayers) {
+        if (_isActiveEnemy(state, state.hexes[nbrs[ni]], playerId)) {
           hasEnemyNeighbor = 1
           break
         }
@@ -358,7 +411,7 @@ function encodeState (state, playerId) {
   f[i++] = Math.min(borderCount / 10, 1)
   f[i++] = Math.min(myUnits.length / 5, 1)
 
-  // i === 48 here
+  // i === 75 here
   return f
 }
 
@@ -370,11 +423,9 @@ function encodeState (state, playerId) {
 function executeActionRL (state, actionIdx) {
   const player = state.activePlayer
 
-  // Build per-turn context (cheap)
-  const myTerrs = []
-  for (let t = 0; t < state.territories.length; t++) {
-    if (state.territories[t].owner === player) myTerrs.push(state.territories[t])
-  }
+  // Build the same sorted territory list used by encodeState() so that
+  // territory slot indices are consistent between observation and action.
+  const myTerrs = _sortedTerritories(state, player)
   const myUnits = getUnmovedUnits(state, player)
 
   // ── 0: END_TURN ──
@@ -418,7 +469,7 @@ function executeActionRL (state, actionIdx) {
       const mk = vm.moves[mi]
       const mh = state.hexes[mk]
       if (!mh || mh.owner === player) continue
-      if (mh.owner === null || mh.owner >= state.numActivePlayers) continue
+      if (!_isActiveEnemy(state, mh, player)) continue
       const r = (mh.structure === STRUCTURE_HUT ? R_CAPTURE_HUT : R_CAPTURE_ENEMY) +
                 (mh.terrain === TERRAIN_TREE || mh.terrain === TERRAIN_PALM ? R_CLEAR_TREE : 0)
       if (r > bestR) { bestR = r; bestKey = mk }
@@ -438,6 +489,7 @@ function executeActionRL (state, actionIdx) {
       const mh = state.hexes[mk]
       if (!mh || mh.owner === player) continue
       if (mh.owner === null || mh.owner >= state.numActivePlayers) {
+        // neutral / inactive territory
         executeMove(state, unit.key, mk)
         return R_CAPTURE_NEUTRAL
       }
