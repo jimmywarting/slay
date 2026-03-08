@@ -34,21 +34,24 @@ const MAX_TERR_SLOTS = 3
 const MAP_RADIUS = MAP_RADIUS_DEFAULT  // max radius; used for coordinate normalisation in encodeState
 
 // Fitness rewards / penalties
-const R_WIN              =  5.0
-const R_CAPTURE_HUT      =  1.0
-const R_CAPTURE_ENEMY    =  0.5
-const R_CAPTURE_NEUTRAL  =  0.3
-const R_BUY_UNIT         =  0.1
-const R_BUILD_TOWER      =  0.1
-const R_MERGE            =  0.2
+const R_WIN              = 10.0   // winning clearly dominates all other signals
+const R_WIN_SPEED        =  5.0   // extra bonus for winning early; scaled by (1 - turn/MAX_TURNS),
+                                   // so winning at turn 0 adds +5, at turn 100 adds +2.5, at the
+                                   // last possible turn adds ~0.  Rewards faster victories.
+const R_CAPTURE_HUT      =  2.0   // capturing enemy hut destroys their territory — highest per-action reward
+const R_CAPTURE_ENEMY    =  0.8   // capturing a non-hut enemy hex
+const R_CAPTURE_NEUTRAL  =  0.2   // capturing inactive/neutral hex (less competitive than enemy)
+const R_BUY_UNIT         =  0.2   // buying a unit enables future attacks
+const R_BUILD_TOWER      =  0.05  // defensive building, lower priority
+const R_MERGE            =  0.2   // merging units into a stronger one
 const R_REPOSITION       =  0.05
 const R_CLEAR_TREE       =  0.15  // cleared a tree/palm → income-generating land
-const R_SURVIVAL_PER_TURN = 0.005 // base constant; at runtime scaled by turn/MAX_TURNS_PER_GAME
+const R_SURVIVAL_PER_TURN = 0.02  // base constant; at runtime scaled by turn/MAX_TURNS_PER_GAME
                                    // so each additional turn survived is worth slightly more
-const P_INVALID          = -0.1   // action cannot exist (no territory / unit slot)
-const P_CANT_AFFORD      = -0.15  // tried to buy/build without enough gold
+const P_INVALID          = -0.05  // action cannot exist (no territory / unit slot)
+const P_CANT_AFFORD      = -0.08  // tried to buy/build without enough gold
 const P_NO_MOVE          = -0.05  // action exists but no valid target found
-const P_IDLE_TURN        = -0.3   // ended turn while units were idle or a buy was affordable
+const P_IDLE_TURN        = -0.15  // ended turn while units were idle or a buy was affordable
 
 const MAX_ACTIONS_PER_TURN = 25
 const MAX_TURNS_PER_GAME   = 200
@@ -612,13 +615,17 @@ function runSelfPlayGame (agents) {
     checkWinConditionHeadless(state)
     turn++
   }
-  // Win bonus (only active players compete)
-  if (state.winner !== null && state.winner < numActive) agents[state.winner].fitness += R_WIN
-  // Per-hex ownership bonus: primary fitness driver for territory control (active players only)
+  // Win bonus: base reward + speed bonus (winning sooner = higher bonus).
+  if (state.winner !== null && state.winner < numActive) {
+    const speedBonus = R_WIN_SPEED * Math.max(0, 1 - turn / MAX_TURNS_PER_GAME)
+    agents[state.winner].fitness += R_WIN + speedBonus
+  }
+  // Per-hex ownership bonus: supplementary territory signal; kept small so the win
+  // bonus clearly dominates (active players only).
   for (const k in state.hexes) {
     const h = state.hexes[k]
     if (h.terrain !== TERRAIN_WATER && h.owner !== null && h.owner < numActive) {
-      agents[h.owner].fitness += 0.1
+      agents[h.owner].fitness += 0.03
     }
   }
   for (let i = 0; i < n; i++) agents[i].gamesPlayed++
@@ -668,13 +675,17 @@ function runSelfPlayGameWeights (agentWeights) {
       fitnessDeltas[0] += R_SURVIVAL_PER_TURN * turn / MAX_TURNS_PER_GAME
     }
   }
-  // Win bonus (only active players compete)
-  if (state.winner !== null && state.winner < numActive) fitnessDeltas[state.winner] += R_WIN
-  // Per-hex ownership bonus: primary fitness driver for territory control (active players only)
+  // Win bonus: base reward + speed bonus (winning sooner = higher bonus).
+  if (state.winner !== null && state.winner < numActive) {
+    const speedBonus = R_WIN_SPEED * Math.max(0, 1 - turn / MAX_TURNS_PER_GAME)
+    fitnessDeltas[state.winner] += R_WIN + speedBonus
+  }
+  // Per-hex ownership bonus: supplementary territory signal; kept small so the win
+  // bonus clearly dominates (active players only).
   for (const k in state.hexes) {
     const h = state.hexes[k]
     if (h.terrain !== TERRAIN_WATER && h.owner !== null && h.owner < numActive) {
-      fitnessDeltas[h.owner] += 0.1
+      fitnessDeltas[h.owner] += 0.03
     }
   }
   return fitnessDeltas

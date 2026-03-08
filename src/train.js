@@ -17,14 +17,14 @@ import {
 // ── Configuration ─────────────────────────────────────────────────────────────
 
 const POPULATION_SIZE    = 6
-const GAMES_PER_CANDIDATE = 1     // games each candidate plays vs the frozen opponent per generation.
-                                   // 1 is sufficient because the fixed map and frozen opponent eliminate
-                                   // most inter-game variance (previously 6 games were needed to average
-                                   // out random map/opponent noise).
+const GAMES_PER_CANDIDATE = 2     // games each candidate plays vs the frozen opponent per generation.
+                                   // 2 games (once as each player, reducing positional bias) give a
+                                   // more reliable fitness estimate without much extra cost because the
+                                   // fixed map + frozen opponent eliminate most inter-game noise.
 const NUM_ELITE          = 2      // agents that survive unchanged each gen
 const MUTATION_RATE_INIT = 0.15   // starting mutation rate
 const MUTATION_RATE_MIN  = 0.03   // floor
-const MUTATION_DECAY     = 0.985  // rate decays by this factor each generation
+const MUTATION_DECAY     = 0.995  // slower decay: mutation stays active much longer before reaching the floor
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ let frozenBestWeights = null  // flat weights of the frozen reference opponent f
 function _createWorkerPool () {
   if (typeof Worker === 'undefined') return null
   const numWorkers = Math.min(
-    GAMES_PER_GEN,
+    POPULATION_SIZE,
     typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4
   )
   const pool = []
@@ -60,9 +60,10 @@ function _terminateWorkers () {
 
 // Evaluate each candidate against the frozen reference opponent in parallel.
 // agentWeightsArray[i] is the flat weights for candidate i.
-// Each candidate plays GAMES_PER_CANDIDATE games as slot 0; all opponent slots
-// use frozenBestWeights (module-level).  Returns a Float64Array of candidate
-// fitness totals (only slot 0 of each game is accumulated per candidate).
+// Each candidate plays GAMES_PER_CANDIDATE games as slot 0 against frozenBestWeights.
+// Running 2 games per candidate gives a more reliable fitness estimate; only
+// the candidate's fitness (slot 0) from each game is accumulated.
+// Returns a Float64Array of cumulative candidate fitness totals.
 function _runGamesParallel (agentWeightsArray) {
   const n = agentWeightsArray.length
 
