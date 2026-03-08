@@ -147,10 +147,8 @@ function getTerritoryForHex(state, key) {
 // = max strength of any unit/structure on the hex itself OR on any
 //   adjacent hex owned by the same player.
 //
-// A unit that has already moved this turn (unit.moved === true) is considered
-// "spent" and only defends the hex it occupies — it does NOT extend its
-// defensive umbrella to neighbouring hexes.  Structures (huts, towers) always
-// contribute to adjacent-hex defence regardless.
+// Units defend all neighbouring hexes regardless of whether they have already
+// moved this turn.  Structures (huts, towers) likewise always contribute.
 function getHexDefenseStrength(state, targetKey) {
   const hexes = state.hexes
   const targetHex = hexes[targetKey]
@@ -159,24 +157,22 @@ function getHexDefenseStrength(state, targetKey) {
   const owner = targetHex.owner
   let maxDef = 0
 
-  // isAdjacent: true when checking a neighbouring hex (not the target itself).
-  // Moved units are excluded from adjacency contributions.
-  function checkHex(h, isAdjacent) {
+  function checkHex(h) {
     if (!h) return
-    if (h.unit && (!isAdjacent || !h.unit.moved)) {
+    if (h.unit) {
       maxDef = Math.max(maxDef, UNIT_DEFS[h.unit.level].strength)
     }
     if (h.structure === STRUCTURE_HUT) maxDef = Math.max(maxDef, 1)
     if (h.structure === STRUCTURE_TOWER) maxDef = Math.max(maxDef, 2)
   }
 
-  checkHex(targetHex, false)
+  checkHex(targetHex)
 
   if (owner !== null) {
     const nbrs = hexNeighborKeys(targetHex.q, targetHex.r)
     for (let i = 0; i < nbrs.length; i++) {
       const nh = hexes[nbrs[i]]
-      if (nh && nh.owner === owner) checkHex(nh, true)
+      if (nh && nh.owner === owner) checkHex(nh)
     }
   }
 

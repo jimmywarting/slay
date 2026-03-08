@@ -310,14 +310,13 @@ defenseStrength(targetKey) = max of:
       tower → 2
   • for each of the 6 adjacent hexes that share the same owner as targetKey:
       • strength of the structure on that neighbour (hut=1, tower=2)
-      • strength of the unit on that neighbour, BUT ONLY if unit.moved === false
+      • strength of the unit on that neighbour (regardless of whether it has moved)
 ```
 
 Key rules:
 
-* **Own-hex unit**: always contributes its full strength (regardless of `moved`).
-* **Adjacent unit**: contributes its strength only if `unit.moved === false`.  A unit that has already acted this turn (`moved = true`) is "spent" and provides **no adjacency defense** — it only defends the hex it stands on.
-* **Structures** (huts, towers): always contribute to adjacency defense, regardless of any other state.
+* **Units always defend**: a unit contributes its full strength to both the hex it occupies and all 6 adjacent hexes owned by the same player, regardless of whether it has already moved this turn.
+* **Structures** (huts, towers): always contribute to adjacency defense.
 * An unowned (neutral) hex has `owner = null`; adjacency defense is only computed for hexes with a non-null owner.
 * If the target hex does not exist, the function returns `99` (unreachable).
 
