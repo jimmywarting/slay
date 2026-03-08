@@ -96,7 +96,9 @@ function ageGravestones(state) {
 }
 
 // Spread trees and palms: each tree/palm ages by 1 every endTurn; when age
-// reaches 2 it spreads to one random valid adjacent hex and resets to 0.
+// reaches 4 it may spread (40% chance) to one random valid adjacent hex and
+// resets to 0.  Raising the threshold and adding a probability gate reduces the
+// spread rate to roughly 1/5 of the original rate, preventing runaway growth.
 // Trees spread to any adjacent empty land hex (owned or not).
 // Palms spread to any adjacent empty land hex adjacent to water.
 function spreadTrees(state) {
@@ -111,8 +113,11 @@ function spreadTrees(state) {
 
     if (!hex.treeAge) hex.treeAge = 0
     hex.treeAge++
-    if (hex.treeAge < 2) continue
+    if (hex.treeAge < 4) continue
     hex.treeAge = 0
+
+    // 40% chance to actually spread this cycle
+    if (Math.random() >= 0.4) continue
 
     // Collect valid spread candidates
     const nbrKeys = hexNeighborKeys(hex.q, hex.r)
