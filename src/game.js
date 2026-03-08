@@ -8,7 +8,7 @@ import { initInput } from './input.js'
 import { getTerritoryForHex } from './territory.js'
 import { computeIncome, computeUpkeep } from './economy.js'
 import { UNIT_DEFS } from './units.js'
-import { TERRAIN_WATER } from './constants.js'
+import { STRUCTURE_HUT } from './constants.js'
 import { isAIPlayer, runAITurn, appendToLog } from './ai.js'
 import { getActiveNeuralAgent } from './agent-store.js'
 import { startTraining, stopTraining, resetTraining, isTrainingActive, getTrainingStats } from './train.js'
@@ -454,25 +454,25 @@ async function runPendingAITurns() {
   }
 }
 
-// A player wins when every non-water hex on the island belongs to them.
-// A player is eliminated when they own no hexes at all.
+// A player wins when all opponents own no huts (they have been eliminated).
+// A player is also considered active only while they still own at least one hut.
 function checkWinCondition(state) {
   if (state.gameOver) return
 
-  // Count land-owning players
-  const ownedBy = {}
+  // Determine which players still own at least one hut
+  const hasHut = {}
   for (const k in state.hexes) {
     const hex = state.hexes[k]
-    if (hex.terrain !== TERRAIN_WATER && hex.owner !== null) {
-      ownedBy[hex.owner] = true
+    if (hex.structure === STRUCTURE_HUT && hex.owner !== null) {
+      hasHut[hex.owner] = true
     }
   }
 
-  const activePlayers = Object.keys(ownedBy).map(Number)
-  if (activePlayers.length === 1) {
+  const playersWithHuts = Object.keys(hasHut).map(Number)
+  if (playersWithHuts.length === 1) {
     state.gameOver = true
-    state.winner = activePlayers[0]
-  } else if (activePlayers.length === 0) {
+    state.winner = playersWithHuts[0]
+  } else if (playersWithHuts.length === 0) {
     state.gameOver = true
     state.winner = null
   }

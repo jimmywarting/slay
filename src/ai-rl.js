@@ -361,12 +361,12 @@ function runSelfPlayGameWeights(weights1, weights2) {
 
 function checkWinLocal(state) {
   if (state.gameOver) return
-  const ownedBy = {}
+  const hasHut = {}
   for (const k in state.hexes) {
     const h = state.hexes[k]
-    if (h.terrain !== TERRAIN_WATER && h.owner !== null) ownedBy[h.owner] = true
+    if (h.structure === STRUCTURE_HUT && h.owner !== null) hasHut[h.owner] = true
   }
-  const active = Object.keys(ownedBy).map(Number)
+  const active = Object.keys(hasHut).map(Number)
   if (active.length <= 1) {
     state.gameOver = true
     state.winner   = active.length === 1 ? active[0] : null
