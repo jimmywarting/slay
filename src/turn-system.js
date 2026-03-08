@@ -4,8 +4,28 @@ import { hexNeighborKeys } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_PALM, TERRAIN_TREE, STRUCTURE_GRAVESTONE } from './constants.js'
 import { computeIncome, computeUpkeep, applyBankruptcy } from './economy.js'
 
-// Save a snapshot of the current game state for undo and reset unit moved flags
+// Apply income/upkeep at the start of a player's turn, then snapshot the state.
+// Any bankruptcy is resolved immediately (units → gravestones) before the player
+// gets to act.  The snapshot is taken after the economic phase so that undo only
+// reverts the player's own moves, not the income/upkeep collection.
 function startTurn(state) {
+  const player = state.activePlayer
+
+  // Apply income and upkeep for every territory owned by this player
+  for (let i = 0; i < state.territories.length; i++) {
+    const territory = state.territories[i]
+    if (territory.owner !== player) continue
+
+    const income = computeIncome(state, territory)
+    const upkeep = computeUpkeep(state, territory)
+
+    territory.bank += income - upkeep
+
+    if (territory.bank < 0) {
+      applyBankruptcy(state, territory)
+    }
+  }
+
   state.turnSnapshot = {
     hexes: JSON.parse(JSON.stringify(state.hexes)),
     territories: JSON.parse(JSON.stringify(state.territories))
@@ -24,28 +44,14 @@ function resetMovedFlags(state) {
   }
 }
 
-// End the current player's turn: apply income/upkeep, age gravestones, advance
+// End the current player's turn: age gravestones, spread trees, advance to next player.
+// Income/upkeep is applied at the START of each player's turn (see startTurn).
 function endTurn(state) {
   // Clear the moved flag on all units belonging to the ending player so they
   // no longer render with the "used" opacity badge during the next player's turn.
   resetMovedFlags(state)
 
   const player = state.activePlayer
-
-  // Apply income and upkeep for every territory owned by this player
-  for (let i = 0; i < state.territories.length; i++) {
-    const territory = state.territories[i]
-    if (territory.owner !== player) continue
-
-    const income = computeIncome(state, territory)
-    const upkeep = computeUpkeep(state, territory)
-
-    territory.bank += income - upkeep
-
-    if (territory.bank < 0) {
-      applyBankruptcy(state, territory)
-    }
-  }
 
   // Age gravestones (may convert to tree or palm)
   ageGravestones(state)
