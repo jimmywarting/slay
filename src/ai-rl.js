@@ -43,6 +43,8 @@ const R_BUILD_TOWER      =  0.1
 const R_MERGE            =  0.2
 const R_REPOSITION       =  0.05
 const R_CLEAR_TREE       =  0.15  // cleared a tree/palm → income-generating land
+const R_SURVIVAL_PER_TURN = 0.005 // base constant; at runtime scaled by turn/MAX_TURNS_PER_GAME
+                                   // so each additional turn survived is worth slightly more
 const P_INVALID          = -0.1   // action cannot exist (no territory / unit slot)
 const P_CANT_AFFORD      = -0.15  // tried to buy/build without enough gold
 const P_NO_MOVE          = -0.05  // action exists but no valid target found
@@ -51,6 +53,7 @@ const P_IDLE_TURN        = -0.3   // ended turn while units were idle or a buy w
 const MAX_ACTIONS_PER_TURN = 25
 const MAX_TURNS_PER_GAME   = 200
 const TOTAL_WEIGHTS        = 48 * 32 + 32 + 32 * 16 + 16 + 16 * 24 + 24  // 2504
+const FIXED_NUM_ACTIVE     = 2   // training games are always 2-player: candidate (slot 0) vs opponent (slot 1)
 
 const STORAGE_KEY_BEST = 'slay_rl_best_v1'
 const STORAGE_KEY_POP  = 'slay_rl_pop_v1'
@@ -517,6 +520,46 @@ function createHeadlessState (numActivePlayers) {
   return state
 }
 
+// ── Fixed training map ────────────────────────────────────────────────────────
+// Generated once per training session and reused for every game so the agent
+// trains on a consistent layout and can measure turn-over-turn improvement
+// against a stable reference instead of a new random map each time.
+
+let _fixedTrainingHexes       = null
+let _fixedTrainingTerritories = null
+
+// (Re)generate the fixed training map.  Called at the start of each training
+// session.  Exported so train.js (and tests) can trigger a map reset.
+function resetTrainingMap () {
+  const hexes       = generateHexMap(MAP_RADIUS_DEFAULT)
+  const territories = placeStartingTerritories(hexes, FIXED_NUM_ACTIVE)
+  _fixedTrainingHexes       = hexes
+  _fixedTrainingTerritories = territories
+}
+
+// Clone the fixed training map into a fresh headless game state.
+// Auto-initialises the map on first call if resetTrainingMap() was not called.
+function createHeadlessStateFixed () {
+  if (!_fixedTrainingHexes) resetTrainingMap()
+  const players = []
+  for (let p = 0; p < 6; p++) players.push({ id: p, name: 'A' + p, color: '#fff' })
+  // structuredClone is faster than JSON round-trip when available (Node ≥17, modern browsers).
+  const clone = typeof structuredClone === 'function' ? structuredClone : function (v) { return JSON.parse(JSON.stringify(v)) }
+  const hexes       = clone(_fixedTrainingHexes)
+  const territories = clone(_fixedTrainingTerritories)
+  const state = {
+    players, numActivePlayers: FIXED_NUM_ACTIVE, hexes, territories,
+    turn: 0, activePlayer: 0,
+    selectedHex: null, selectedUnit: null,
+    validMoves: [], freeMoves: {},
+    mode: 'normal', turnSnapshot: null,
+    message: '', gameOver: false, winner: null,
+    aiPlayers: [], actionLog: []
+  }
+  startTurn(state)
+  return state
+}
+
 function checkWinConditionHeadless (state) {
   const ownedBy = {}
   for (const k in state.hexes) {
@@ -582,18 +625,23 @@ function runSelfPlayGame (agents) {
 }
 
 // Run a complete self-play game using pure-JS inference (no TF.js).
-// agentWeights: array of Float32Array, one per agent in the population.
-// Returns a Float64Array of fitness deltas indexed by agent slot.
+// agentWeights: [candidateWeights, opponentWeights] — always a 2-player match.
+//   slot 0 (candidate) is the agent being evaluated; it receives action rewards
+//   and a per-turn survival bonus that grows with game progress so the agent is
+//   always incentivised to stay alive longer.
+//   slot 1 (opponent)  is a frozen reference; only slot 0 fitness is meaningful.
+// Returns a Float64Array of fitness deltas indexed by player slot.
 function runSelfPlayGameWeights (agentWeights) {
   const n = agentWeights.length
   const fitnessDeltas = new Float64Array(n)
-  // Vary active player count (2..n) so the agent trains on different scenarios.
-  const numActive = 2 + Math.floor(Math.random() * (n - 1))
-  const state = createHeadlessState(numActive)
+  // Use the fixed training map so every game in a session starts from the same
+  // layout; each worker auto-initialises its own fixed map on the first call.
+  const state = createHeadlessStateFixed()
+  const numActive = state.numActivePlayers
   let turn = 0
   while (!state.gameOver && turn < MAX_TURNS_PER_GAME) {
     const player  = state.activePlayer
-    const weights = agentWeights[player]
+    const weights = agentWeights[player % n]
     for (let step = 0; step < MAX_ACTIONS_PER_TURN; step++) {
       const features  = encodeState(state, player)
       const actionIdx = selectActionPure(weights, features)
@@ -613,6 +661,12 @@ function runSelfPlayGameWeights (agentWeights) {
     endTurn(state)
     checkWinConditionHeadless(state)
     turn++
+    // Per-turn survival bonus for the candidate (slot 0): reward is proportional
+    // to how far into the game we are so that each additional turn survived is
+    // worth slightly more than the previous one.
+    if (player === 0) {
+      fitnessDeltas[0] += R_SURVIVAL_PER_TURN * turn / MAX_TURNS_PER_GAME
+    }
   }
   // Win bonus (only active players compete)
   if (state.winner !== null && state.winner < numActive) fitnessDeltas[state.winner] += R_WIN
@@ -729,6 +783,7 @@ export {
   executeActionRL,
   getUnmovedUnits,
   createHeadlessState,
+  createHeadlessStateFixed,
   checkWinConditionHeadless,
   runSelfPlayGame,
   runSelfPlayGameWeights,
@@ -738,5 +793,6 @@ export {
   saveBestAgent,
   savePopulation,
   loadBestAgent,
-  loadPopulation
+  loadPopulation,
+  resetTrainingMap
 }

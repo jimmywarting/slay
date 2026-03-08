@@ -12,7 +12,7 @@ self.onmessage = function (e) {
   const msg = e.data
   if (msg.type !== 'run_games') return
 
-  const { agentWeights, numGames, workerIdx } = msg
+  const { agentWeights, numGames, workerIdx, candidateIdx } = msg
   const n = agentWeights.length
   const fitnessDeltas = new Float64Array(n)
 
@@ -21,5 +21,5 @@ self.onmessage = function (e) {
     for (let i = 0; i < n; i++) fitnessDeltas[i] += deltas[i]
   }
 
-  self.postMessage({ type: 'result', fitnessDeltas, workerIdx })
+  self.postMessage({ type: 'result', fitnessDeltas, workerIdx, candidateIdx })
 }

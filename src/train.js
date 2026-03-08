@@ -10,13 +10,17 @@ import {
   evolveAgents,
   saveBestAgent,
   savePopulation,
-  loadPopulation
+  loadPopulation,
+  resetTrainingMap
 } from './ai-rl.js'
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
 const POPULATION_SIZE    = 6
-const GAMES_PER_GEN      = 6      // self-play games per generation (distributed across workers)
+const GAMES_PER_CANDIDATE = 1     // games each candidate plays vs the frozen opponent per generation.
+                                   // 1 is sufficient because the fixed map and frozen opponent eliminate
+                                   // most inter-game variance (previously 6 games were needed to average
+                                   // out random map/opponent noise).
 const NUM_ELITE          = 2      // agents that survive unchanged each gen
 const MUTATION_RATE_INIT = 0.15   // starting mutation rate
 const MUTATION_RATE_MIN  = 0.03   // floor
@@ -31,6 +35,7 @@ let totalGames       = 0
 let bestFitnessEver  = -Infinity
 let onProgressCb     = null
 let workerPool       = null
+let frozenBestWeights = null  // flat weights of the frozen reference opponent for the current generation
 
 // ── Worker pool ───────────────────────────────────────────────────────────────
 
@@ -53,18 +58,22 @@ function _terminateWorkers () {
   workerPool = null
 }
 
-// Distribute GAMES_PER_GEN games across the worker pool in parallel.
-// Returns a Promise that resolves to a Float64Array of cumulative fitness deltas
-// (indexed by agent/player slot 0..POPULATION_SIZE-1).
-function _runGamesParallel (agentWeights) {
-  const n = agentWeights.length
+// Evaluate each candidate against the frozen reference opponent in parallel.
+// agentWeightsArray[i] is the flat weights for candidate i.
+// Each candidate plays GAMES_PER_CANDIDATE games as slot 0; all opponent slots
+// use frozenBestWeights (module-level).  Returns a Float64Array of candidate
+// fitness totals (only slot 0 of each game is accumulated per candidate).
+function _runGamesParallel (agentWeightsArray) {
+  const n = agentWeightsArray.length
 
   // Fallback: synchronous execution when workers are unavailable
   if (!workerPool || workerPool.length === 0) {
     const total = new Float64Array(n)
-    for (let g = 0; g < GAMES_PER_GEN; g++) {
-      const d = runSelfPlayGameWeights(agentWeights)
-      for (let i = 0; i < n; i++) total[i] += d[i]
+    for (let i = 0; i < n; i++) {
+      for (let g = 0; g < GAMES_PER_CANDIDATE; g++) {
+        const d = runSelfPlayGameWeights([agentWeightsArray[i], frozenBestWeights])
+        total[i] += d[0]
+      }
     }
     return Promise.resolve(total)
   }
@@ -72,38 +81,42 @@ function _runGamesParallel (agentWeights) {
   const numWorkers = workerPool.length
   const promises   = []
 
-  for (let wi = 0; wi < numWorkers; wi++) {
-    // Distribute games as evenly as possible across workers
-    const gamesForWorker = Math.floor(GAMES_PER_GEN / numWorkers) +
-                           (wi < GAMES_PER_GEN % numWorkers ? 1 : 0)
-    if (gamesForWorker === 0) continue
-
-    const worker = workerPool[wi]
+  // One task per candidate — assign round-robin to the worker pool.
+  for (let ci = 0; ci < n; ci++) {
+    const candidateIdx = ci
+    const worker = workerPool[ci % numWorkers]
     promises.push(new Promise(function (resolve, reject) {
       function onMessage (e) {
-        if (e.data.type === 'result') {
+        // Match only the result for this specific candidate.
+        if (e.data.type === 'result' && e.data.candidateIdx === candidateIdx) {
           worker.removeEventListener('message', onMessage)
           worker.removeEventListener('error', onError)
-          resolve(e.data.fitnessDeltas)
+          resolve({ candidateIdx, fitnessDeltas: e.data.fitnessDeltas })
         }
       }
       function onError (err) {
         worker.removeEventListener('message', onMessage)
         worker.removeEventListener('error', onError)
-        console.error('[TrainWorker ' + wi + '] error:', err)
-        reject(new Error('Worker ' + wi + ' failed: ' + (err.message || err)))
+        console.error('[TrainWorker ' + (ci % numWorkers) + '] error:', err)
+        reject(new Error('Worker ' + (ci % numWorkers) + ' failed: ' + (err.message || err)))
       }
       worker.addEventListener('message', onMessage)
       worker.addEventListener('error', onError)
-      worker.postMessage({ type: 'run_games', agentWeights, numGames: gamesForWorker, workerIdx: wi })
+      worker.postMessage({
+        type: 'run_games',
+        agentWeights: [agentWeightsArray[ci], frozenBestWeights],
+        numGames: GAMES_PER_CANDIDATE,
+        candidateIdx,
+        workerIdx: ci % numWorkers
+      })
     }))
   }
 
   return Promise.all(promises).then(function (results) {
     const total = new Float64Array(n)
     for (let ri = 0; ri < results.length; ri++) {
-      const d = results[ri]
-      for (let i = 0; i < n; i++) total[i] += d[i]
+      const r = results[ri]
+      total[r.candidateIdx] += r.fitnessDeltas[0]  // only candidate (slot 0) fitness counts
     }
     return total
   })
@@ -138,6 +151,12 @@ async function startTraining (progressCallback) {
   _ensurePopulation()
   if (!population) { isRunning = false; return }
 
+  // Generate the fixed training map used by all games this session, and
+  // initialise the frozen reference opponent from the current best agent.
+  resetTrainingMap()
+  const initSorted = population.slice().sort(function (a, b) { return b.fitness - a.fitness })
+  frozenBestWeights = initSorted[0].getWeights()
+
   workerPool = _createWorkerPool()
   if (workerPool) {
     console.log('[Train] Using ' + workerPool.length + ' web worker(s) for parallel self-play.')
@@ -155,7 +174,7 @@ async function startTraining (progressCallback) {
       MUTATION_RATE_INIT * Math.pow(MUTATION_DECAY, generation)
     )
 
-    // Serialise all agent weights for transfer to workers
+    // Serialise all candidate weights for transfer to workers
     const agentWeights = population.map(function (a) { return a.getWeights() })
 
     // Run all games in parallel across the worker pool; stop on unrecoverable error
@@ -173,9 +192,9 @@ async function startTraining (progressCallback) {
     // Apply accumulated fitness deltas back to population
     for (let i = 0; i < population.length; i++) {
       population[i].fitness    += fitnessDeltas[i]
-      population[i].gamesPlayed += GAMES_PER_GEN  // every agent participates in every game
+      population[i].gamesPlayed += GAMES_PER_CANDIDATE
     }
-    totalGames += GAMES_PER_GEN
+    totalGames += POPULATION_SIZE * GAMES_PER_CANDIDATE
 
     // Report progress
     const sorted  = population.slice().sort(function (a, b) { return b.fitness - a.fitness })
@@ -186,6 +205,11 @@ async function startTraining (progressCallback) {
       bestFitnessEver = best.fitness
       saveBestAgent(best)
     }
+
+    // The current generation's best becomes the frozen reference opponent for
+    // the next generation — candidates always train against a stable, improving
+    // adversary rather than a constantly shifting population.
+    frozenBestWeights = best.getWeights()
 
     if (onProgressCb) {
       onProgressCb({
@@ -221,10 +245,11 @@ function resetTraining () {
   stopTraining()
   try { localStorage.removeItem('slay_rl_best_v1') } catch (_) {}
   try { localStorage.removeItem('slay_rl_pop_v1')  } catch (_) {}
-  population      = null
-  generation      = 0
-  totalGames      = 0
-  bestFitnessEver = -Infinity
+  population        = null
+  generation        = 0
+  totalGames        = 0
+  bestFitnessEver   = -Infinity
+  frozenBestWeights = null
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
