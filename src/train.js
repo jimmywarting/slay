@@ -267,7 +267,7 @@ function resetTraining() {
   draws           = 0
   fitnessHistory  = []
   clearSavedAgent()
-  try { globalThis.tf && globalThis.tf.io.removeModel('localstorage://slay-champion') } catch (e) {}
+  if (globalThis.tf) globalThis.tf.io.removeModel('localstorage://slay-champion').catch(function () {})
 }
 
 function isTrainingActive() { return running }
