@@ -10,6 +10,7 @@ import { computeIncome, computeUpkeep } from './economy.js'
 import { UNIT_DEFS } from './units.js'
 import { TERRAIN_WATER } from './constants.js'
 import { isAIPlayer, runAITurn, appendToLog } from './ai.js'
+import { getActiveNeuralAgent } from './agent-store.js'
 import { startTraining, stopTraining, resetTraining, isTrainingActive, getTrainingStats } from './train.js'
 
 const NUM_PLAYERS = 2       // number of active players (human + AI)
@@ -241,11 +242,15 @@ function updateUI(state) {
   const player = state.players[state.activePlayer]
   const aiTurn = isAIPlayer(state, state.activePlayer)
 
+  // Show which type of model (neural / heuristic) the current AI player is using.
+  const neuralAgent = getActiveNeuralAgent()
+  const aiLabel     = neuralAgent ? ('🧠 [gen ' + neuralAgent.generation + ']') : '🤖'
+
   const thinkingSuffix = state.aiThinking ? ' – thinking…' : "'s Turn"
   const nameLabel = watchLoopActive
-    ? '👁 ' + player.name + ' (AI)' + thinkingSuffix
+    ? '👁 ' + player.name + ' (AI ' + (neuralAgent ? 'Neural' : 'Heuristic') + ')' + thinkingSuffix
     : aiTurn
-      ? '🤖 ' + player.name + ' (AI)' + thinkingSuffix
+      ? aiLabel + ' ' + player.name + thinkingSuffix
       : player.name + "'s Turn"
   document.getElementById('playerName').textContent = nameLabel
   document.getElementById('playerName').style.color = player.color
@@ -480,8 +485,15 @@ window.addEventListener('DOMContentLoaded', initGame)
 window.addEventListener('load', function () {
   const statusEl = document.getElementById('trainStatus')
   if (!statusEl) return
-  if (typeof globalThis.tf !== 'undefined') {
-    statusEl.textContent = 'Ready to train. Click ▶ Start.'
+
+  const savedAgent = getActiveNeuralAgent()
+  if (savedAgent) {
+    // A model was saved in a previous session — show its status
+    statusEl.textContent = '💾 Model loaded from generation ' + savedAgent.generation + '. Ready to play or continue training.'
+    statusEl.style.color = '#27ae60'
+    updateTrainingUI(getTrainingStats())
+  } else if (typeof globalThis.tf !== 'undefined') {
+    statusEl.textContent = 'TF.js ready. No model trained yet — click ▶ Start.'
   } else {
     statusEl.textContent = 'TF.js failed to load – training unavailable.'
   }
@@ -490,23 +502,69 @@ window.addEventListener('load', function () {
 function updateTrainingUI(stats) {
   const statusEl   = document.getElementById('trainStatus')
   const progressEl = document.getElementById('trainProgress')
+  const chartEl    = document.getElementById('trainChart')
   if (!statusEl || !progressEl) return
 
   if (!stats) {
-    statusEl.textContent  = 'No training data. Click ▶ Start to begin.'
-    progressEl.textContent = ''
+    statusEl.textContent   = 'No training data. Click ▶ Start to begin.'
+    progressEl.innerHTML   = ''
+    if (chartEl) chartEl.innerHTML = ''
     return
   }
 
-  const running = isTrainingActive()
-  statusEl.textContent = running ? '⚙ Training…' : '⏸ Paused'
+  const running     = isTrainingActive()
+  const savedAgent  = getActiveNeuralAgent()
+  const modelStatus = savedAgent
+    ? '💾 Model saved — Gen ' + savedAgent.generation + ' (used by AI)'
+    : '⚠ No model saved yet'
+
+  statusEl.textContent = running ? '⚙ Training in progress…' : '⏸ Training paused'
+  statusEl.style.color = running ? '#2ecc71' : '#95a5a6'
+
+  const totalDecided = stats.wins + stats.losses + stats.draws
+  const winPct  = totalDecided > 0 ? Math.round(100 * stats.wins / totalDecided) : 0
+  const lossPct = totalDecided > 0 ? Math.round(100 * stats.losses / totalDecided) : 0
+  const drwPct  = totalDecided > 0 ? Math.round(100 * stats.draws / totalDecided) : 0
+
   progressEl.innerHTML =
-    'Gen <b>' + stats.generation + '</b> | ' +
-    'Games <b>' + stats.totalGames + '</b><br>' +
-    'Best fitness: <b>' + (stats.bestFitness || 0).toFixed(2) + '</b> ' +
-    '(all-time: ' + (stats.bestFitnessEver || 0).toFixed(2) + ')<br>' +
-    (stats.mutRate    ? 'Mutation σ: '  + (stats.mutRate * 100).toFixed(1) + '%' : '') +
-    (stats.numWorkers ? ' | Workers: ' + stats.numWorkers : '')
+    '<div style="color:#27ae60">' + modelStatus + '</div>' +
+    '<div style="margin-top:4px">' +
+      'Gen <b>' + stats.generation + '</b> &nbsp;|&nbsp; Games <b>' + stats.totalGames + '</b>' +
+    '</div>' +
+    '<div>' +
+      'Best fitness: <b>' + (stats.bestFitness || 0).toFixed(1) + '</b>' +
+      ' &nbsp;All-time: <b>' + (stats.bestFitnessEver || 0).toFixed(1) + '</b>' +
+    '</div>' +
+    (totalDecided > 0
+      ? '<div>W/L/D: ' +
+          '<span style="color:#2ecc71"><b>' + stats.wins + '</b></span>/' +
+          '<span style="color:#e74c3c"><b>' + stats.losses + '</b></span>/' +
+          '<span style="color:#95a5a6"><b>' + stats.draws + '</b></span>' +
+          ' (' + winPct + '%/' + lossPct + '%/' + drwPct + '%)' +
+        '</div>'
+      : '') +
+    '<div style="color:#7f8c8d;font-size:0.7rem;margin-top:2px">' +
+      'Workers: ' + stats.numWorkers + ' &nbsp;|&nbsp; Mutation σ: ' + (stats.mutRate * 100).toFixed(1) + '%' +
+    '</div>'
+
+  // Fitness sparkline using block characters
+  if (chartEl && stats.fitnessHistory && stats.fitnessHistory.length > 1) {
+    const hist = stats.fitnessHistory
+    const maxFit = Math.max.apply(null, hist.map(function (h) { return h.fitness }))
+    const minFit = Math.min.apply(null, hist.map(function (h) { return h.fitness }))
+    const range  = Math.max(1, maxFit - minFit)
+    const bars   = '▁▂▃▄▅▆▇█'
+    const last   = Math.min(32, hist.length)
+    let sparkline = ''
+    for (let i = hist.length - last; i < hist.length; i++) {
+      const norm = (hist[i].fitness - minFit) / range
+      sparkline += bars[Math.round(norm * (bars.length - 1))]
+    }
+    chartEl.textContent = sparkline
+    chartEl.title       = 'Fitness over last ' + last + ' generations'
+  } else if (chartEl) {
+    chartEl.textContent = ''
+  }
 }
 
 

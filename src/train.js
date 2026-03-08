@@ -5,14 +5,18 @@
 //     used to define the model shape and to save/restore the champion model.
 //   • A pool of module web workers (train-worker.js) runs self-play games in
 //     parallel, each worker receiving a pair of flat weight arrays, playing one
-//     full game, and returning {fitness1, fitness2}.
+//     full game, and returning {fitness1, fitness2, winner}.
 //   • Neuroevolution (tournament selection + Gaussian mutation) evolves the
 //     weight population each generation without back-propagation.
+//   • All localStorage access is delegated to agent-store.js so it stays on
+//     the main thread and is never called from workers.
 
 import {
-  createRandomWeights, saveNeuralAgent, clearSavedAgent,
+  createRandomWeights,
   IN, H1, H2, OUT, TOTAL_WEIGHTS
 } from './ai-rl.js'
+
+import { saveNeuralAgent, clearSavedAgent, getActiveNeuralAgent } from './agent-store.js'
 
 // ── Hyper-parameters ──────────────────────────────────────────────────────────
 
@@ -24,15 +28,20 @@ const ELITE_FRACTION = 0.5  // fraction of population kept unchanged
 
 // ── Runtime state ─────────────────────────────────────────────────────────────
 
-let population     = []  // Array of Float32Array (weights)
-let fitnessScores  = []  // latest fitness per individual
-let generation     = 0
-let totalGames     = 0
-let bestFitness    = 0
+let population      = []  // Array of Float32Array (weights)
+let fitnessScores   = []  // latest fitness per individual
+let generation      = 0
+let totalGames      = 0
+let bestFitness     = 0
 let bestFitnessEver = 0
-let workerPool     = []
-let running        = false
-let onUpdate       = null  // stats callback supplied by game.js
+let lastSavedGen    = -1  // generation at which the model was last saved to localStorage
+let wins            = 0   // agent-1 wins across all self-play games
+let losses          = 0   // agent-1 losses (= agent-2 wins)
+let draws           = 0
+let fitnessHistory  = []  // { gen, fitness }[] — one entry per generation
+let workerPool      = []
+let running         = false
+let onUpdate        = null  // stats callback supplied by game.js
 
 // ── TF.js model (main-thread only) ───────────────────────────────────────────
 
@@ -73,21 +82,15 @@ function setTFWeights(model, flat) {
   tensors.forEach(function (t) { t.dispose() })
 }
 
-// Initialise population from localStorage (if a saved agent exists) plus randoms.
+// Initialise population from a saved agent (if one exists) plus randoms.
+// Uses agent-store.js so that all localStorage access stays on the main thread.
 function initPopulation() {
   population = []
-  let seedWeights = null
-
-  try {
-    const raw = localStorage.getItem('slay_best_agent')
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      seedWeights = new Float32Array(parsed.weights)
-    }
-  } catch (e) { /* ignore */ }
+  const saved = getActiveNeuralAgent()
+  const seedWeights = saved && saved.weights.length === TOTAL_WEIGHTS ? saved.weights : null
 
   for (let i = 0; i < POP_SIZE; i++) {
-    if (i === 0 && seedWeights && seedWeights.length === TOTAL_WEIGHTS) {
+    if (i === 0 && seedWeights) {
       population.push(seedWeights.slice())
     } else {
       population.push(createRandomWeights())
@@ -141,7 +144,7 @@ function runGeneration() {
 
     worker.onmessage = function (evt) {
       if (!running) return
-      const { roundId, fitness1, fitness2 } = evt.data
+      const { roundId, fitness1, fitness2, winner } = evt.data
       if (roundId !== m.id) return  // stale result from prior generation
 
       fitAccum[m.a]  += fitness1
@@ -150,6 +153,11 @@ function runGeneration() {
       gamesCount[m.b]++
       totalGames++
       completed++
+
+      // Win/loss/draw tracking from agent m.a's perspective in each matchup
+      if (winner === m.a)       wins++
+      else if (winner === m.b)  losses++
+      else                      draws++
 
       if (completed >= matchups.length) {
         // Normalise
@@ -180,6 +188,8 @@ function evolve() {
   bestFitness = fitnessScores[bestIdx]
   if (bestFitness > bestFitnessEver) {
     bestFitnessEver = bestFitness
+    lastSavedGen = generation
+    // Save to localStorage via main-thread-only agent-store.js
     saveNeuralAgent(population[bestIdx], generation)
 
     // Also sync weights into a TF.js model for structured persistence
@@ -189,6 +199,10 @@ function evolve() {
       model.save('localstorage://slay-champion').catch(function () {})
     }
   }
+
+  // Record fitness history (capped at 200 entries)
+  fitnessHistory.push({ gen: generation, fitness: bestFitness })
+  if (fitnessHistory.length > 200) fitnessHistory.shift()
 
   generation++
 
@@ -241,12 +255,17 @@ function stopTraining() {
 
 function resetTraining() {
   stopTraining()
-  population     = []
-  fitnessScores  = []
-  generation     = 0
-  totalGames     = 0
-  bestFitness    = 0
+  population      = []
+  fitnessScores   = []
+  generation      = 0
+  totalGames      = 0
+  bestFitness     = 0
   bestFitnessEver = 0
+  lastSavedGen    = -1
+  wins            = 0
+  losses          = 0
+  draws           = 0
+  fitnessHistory  = []
   clearSavedAgent()
   try { globalThis.tf && globalThis.tf.io.removeModel('localstorage://slay-champion') } catch (e) {}
 }
@@ -254,13 +273,24 @@ function resetTraining() {
 function isTrainingActive() { return running }
 
 function getTrainingStats() {
+  const totalDecided = wins + losses + draws
+  const winRate  = totalDecided > 0 ? wins / totalDecided : null
+  const savedAgent = getActiveNeuralAgent()
   return {
-    generation:     generation,
-    totalGames:     totalGames,
-    bestFitness:    bestFitness,
+    generation:      generation,
+    totalGames:      totalGames,
+    bestFitness:     bestFitness,
     bestFitnessEver: bestFitnessEver,
-    numWorkers:     workerPool.length,
-    mutRate:        MUT_STRENGTH
+    lastSavedGen:    lastSavedGen,
+    wins:            wins,
+    losses:          losses,
+    draws:           draws,
+    winRate:         winRate,
+    fitnessHistory:  fitnessHistory.slice(),
+    numWorkers:      workerPool.length,
+    mutRate:         MUT_STRENGTH,
+    hasSavedModel:   savedAgent !== null,
+    savedModelGen:   savedAgent ? savedAgent.generation : null
   }
 }
 

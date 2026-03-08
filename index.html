@@ -175,8 +175,18 @@
       font-size: 0.75rem;
       color: #bdc3c7;
       line-height: 1.7;
-      min-height: 36px;
-      margin-bottom: 8px;
+      min-height: 52px;
+      margin-bottom: 4px;
+    }
+    #trainChart {
+      font-family: monospace;
+      font-size: 0.85rem;
+      letter-spacing: 1px;
+      color: #2ecc71;
+      min-height: 16px;
+      margin-bottom: 6px;
+      overflow: hidden;
+      white-space: nowrap;
     }
     #btnTrain {
       background: #2980b9;
@@ -268,6 +278,7 @@
     <div class="section-title">🧠 Train AI (TensorFlow.js)</div>
     <div id="trainStatus">TensorFlow.js loading…</div>
     <div id="trainProgress"></div>
+    <div id="trainChart" title="Fitness trend (each character = one generation)"></div>
     <div class="btn-group">
       <button id="btnTrain">▶ Start Training</button>
       <button id="btnStopTrain">⏹ Stop</button>
@@ -275,14 +286,16 @@
     </div>
     <p style="font-size:0.68rem;color:#7f8c8d;margin-top:8px;line-height:1.5">
       8 neural agents self-play in parallel web workers and evolve each generation.<br>
-      The best model is used as the game AI once trained.
+      The best model is saved automatically and used as the game AI.<br>
+      👁 Watch AI shows the trained model in action.
     </p>
   </div>
 
   <div class="panel">
     <div class="section-title">How to Play</div>
     <div class="key-desc">
-      You are <strong>Olive</strong>. 🤖 <strong>Forest</strong> is the AI opponent.<br>
+      You are <strong>Olive</strong>. <strong>Forest</strong> is the AI opponent.<br>
+      🧠 = neural model active &nbsp; 🤖 = heuristic fallback.<br>
       Click a unit to select it.<br>
       <span style="color:#64c8ff">■</span> Blue = free reposition (unit stays ready).<br>
       <span style="color:#ffd200">■</span> Gold = action (capture / merge / clear).<br>

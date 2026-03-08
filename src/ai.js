@@ -7,7 +7,8 @@ import { computeIncome, computeUpkeep } from './economy.js'
 import { UNIT_DEFS } from './units.js'
 import { TERRAIN_LAND, TERRAIN_WATER, STRUCTURE_HUT, STRUCTURE_TOWER } from './constants.js'
 import { hexNeighborKeys } from './hex.js'
-import { getActiveNeuralAgent, runNeuralAgentTurn } from './ai-rl.js'
+import { getActiveNeuralAgent } from './agent-store.js'
+import { runNeuralAgentTurn } from './ai-rl.js'
 
 // ── Public API ────────────────────────────────────────────────────────────────
 

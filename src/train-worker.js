@@ -14,5 +14,5 @@ self.onmessage = function (evt) {
     new Float32Array(weights2)
   )
 
-  self.postMessage({ roundId: roundId, fitness1: result.fitness1, fitness2: result.fitness2 })
+  self.postMessage({ roundId: roundId, fitness1: result.fitness1, fitness2: result.fitness2, winner: result.winner })
 }

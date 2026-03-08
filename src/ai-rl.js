@@ -356,7 +356,7 @@ function runSelfPlayGameWeights(weights1, weights2) {
   const fitness1 = (land1 / base) * 100 + (state.winner === 0 ? 50 : 0)
   const fitness2 = (land2 / base) * 100 + (state.winner === 1 ? 50 : 0)
 
-  return { fitness1, fitness2 }
+  return { fitness1, fitness2, winner: state.winner }
 }
 
 function checkWinLocal(state) {
@@ -385,51 +385,11 @@ function createRandomWeights() {
   return w
 }
 
-// ── Persistence ───────────────────────────────────────────────────────────────
-
-const LS_KEY = 'slay_best_agent'
-
-// Load the best trained agent from localStorage.  Returns null when no model
-// has been saved yet, or if the stored data is corrupt.
-function getActiveNeuralAgent() {
-  try {
-    const stored = localStorage.getItem(LS_KEY)
-    if (!stored) return null
-    const parsed = JSON.parse(stored)
-    return {
-      weights:    new Float32Array(parsed.weights),
-      generation: parsed.generation || 0
-    }
-  } catch (e) {
-    return null
-  }
-}
-
-// Persist the best agent weights to localStorage.  Exported so train.js can
-// call it from the main thread (workers cannot access localStorage).
-function saveNeuralAgent(weights, generation) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify({
-      weights:    Array.from(weights),
-      generation: generation
-    }))
-  } catch (e) {
-    // Storage quota exceeded or unavailable — training still continues in memory
-  }
-}
-
-// Remove all saved training data.
-function clearSavedAgent() {
-  try { localStorage.removeItem(LS_KEY) } catch (e) {}
-}
-
 export {
   // Architecture constants (used by train.js for TF model creation)
   IN, H1, H2, OUT, TOTAL_WEIGHTS,
   // Weight helpers
-  createRandomWeights, saveNeuralAgent, clearSavedAgent,
-  // Agent lifecycle
-  getActiveNeuralAgent,
+  createRandomWeights,
   // Agent inference
   runNeuralAgentTurn,
   // Self-play (used in worker)
