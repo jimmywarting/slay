@@ -9,7 +9,7 @@
 import { getValidMoves, executeMove, PEASANT_COST, TOWER_COST, buyUnit } from './movement.js'
 import { computeIncome, computeUpkeep } from './economy.js'
 import {
-  TERRAIN_WATER, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER
+  TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_HUT, STRUCTURE_TOWER
 } from './constants.js'
 import { hexNeighborKeys } from './hex.js'
 import { generateHexMap, placeStartingTerritories, MAP_RADIUS_DEFAULT } from './map.js'
@@ -42,6 +42,7 @@ const R_BUY_UNIT         =  0.1
 const R_BUILD_TOWER      =  0.1
 const R_MERGE            =  0.2
 const R_REPOSITION       =  0.05
+const R_CLEAR_TREE       =  0.15  // cleared a tree/palm → income-generating land
 const P_INVALID          = -0.1   // action cannot exist (no territory / unit slot)
 const P_CANT_AFFORD      = -0.15  // tried to buy/build without enough gold
 const P_NO_MOVE          = -0.05  // action exists but no valid target found
@@ -412,7 +413,8 @@ function executeActionRL (state, actionIdx) {
       const mh = state.hexes[mk]
       if (!mh || mh.owner === player) continue
       if (mh.owner === null || mh.owner >= state.numActivePlayers) continue
-      const r = (mh.structure === STRUCTURE_HUT) ? R_CAPTURE_HUT : R_CAPTURE_ENEMY
+      const r = (mh.structure === STRUCTURE_HUT ? R_CAPTURE_HUT : R_CAPTURE_ENEMY) +
+                (mh.terrain === TERRAIN_TREE || mh.terrain === TERRAIN_PALM ? R_CLEAR_TREE : 0)
       if (r > bestR) { bestR = r; bestKey = mk }
     }
     if (!bestKey) return P_NO_MOVE
