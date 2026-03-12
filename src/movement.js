@@ -62,8 +62,8 @@ function getBuyPlacementHexes(state, territory, level) {
       const nh = state.hexes[nk]
       if (!nh || nh.terrain === TERRAIN_WATER) continue
       if (nh.owner === player) continue
-      if (nh.unit) continue  // can't land on a unit
       // The bought unit must be strictly stronger than the target hex's defense.
+      // This allows parachuting onto an enemy unit when the bought level beats it.
       if (canCapture(state, level, nk)) adjacentHexes.push(nk)
     }
   }

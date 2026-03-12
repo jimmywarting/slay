@@ -84,10 +84,12 @@ function greedyBuyUnits(state, player) {
       const treePressure = countTerritoryTreePressure(state, t)
 
       // Buy if: net income stays non-negative after the purchase,
-      // OR the saved gold covers at least 3 turns of the resulting deficit.
+      // OR the saved gold covers at least 4 turns of the resulting deficit,
+      // but only when the territory is not already running a deficit.
+      const isCurrentlyProfitable = income - upkeep >= 0
       const sustainable = netAfterBuy >= 0
       const deficit = Math.abs(Math.min(0, netAfterBuy))
-      const hasRunway = bankAfterBuy >= deficit * 4
+      const hasRunway = isCurrentlyProfitable && bankAfterBuy >= deficit * 4
       if (!sustainable && !hasRunway) continue
 
       // In healthy territories, avoid overbuying peasants if there is no immediate
@@ -139,7 +141,7 @@ function findFrontierPlacement(state, territory, player) {
     }
 
     const treeAge = isTree ? (h.treeAge || 0) : 0
-    const clearingBonus = isTree ? 5 + treeAge * 2 : (h.structure === STRUCTURE_GRAVESTONE ? 2 : 0)
+    const clearingBonus = isTree ? 25 + treeAge * 5 : (h.structure === STRUCTURE_GRAVESTONE ? 2 : 0)
     const score = borderScore * 2 + ownTreeNbrs + clearingBonus
 
     if (score > bestScore) {
@@ -258,7 +260,7 @@ function scoreMoveGreedy(state, fromKey, toKey, vm, player) {
       if (!nh || nh.owner !== player) continue
       if (nh.terrain === TERRAIN_TREE || nh.terrain === TERRAIN_PALM) localThreat++
     }
-    return 130 + treeAge * 15 + localThreat * 10
+    return 200 + treeAge * 20 + localThreat * 15
   }
 
   // ── Clear own gravestone to recover buildable space ──
@@ -358,8 +360,12 @@ function isMergeEconomicallySafe(state, fromKey, toKey, resultLevel) {
   const netAfterMerge = income - (upkeep + deltaUpkeep)
   if (netAfterMerge >= 0) return true
 
+  // Never merge to create a more expensive unit when already running a deficit.
+  const isCurrentlyProfitable = income - upkeep >= 0
+  if (!isCurrentlyProfitable) return false
+
   const deficit = Math.abs(netAfterMerge)
-  return territory.bank >= deficit * 3
+  return territory.bank >= deficit * 5
 }
 
 function countTerritoryTreePressure(state, territory) {
