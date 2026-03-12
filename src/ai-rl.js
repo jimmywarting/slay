@@ -5,7 +5,15 @@
 import { getValidMoves, executeMove, PEASANT_COST, TOWER_COST } from './movement.js'
 import { getTerritoryForHex } from './territory.js'
 import { computeIncome, computeUpkeep } from './economy.js'
-import { TERRAIN_LAND, TERRAIN_WATER, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
+import {
+  TERRAIN_LAND,
+  TERRAIN_WATER,
+  TERRAIN_TREE,
+  TERRAIN_PALM,
+  STRUCTURE_HUT,
+  STRUCTURE_TOWER,
+  STRUCTURE_GRAVESTONE
+} from './constants.js'
 import { hexNeighborKeys } from './hex.js'
 import { generateHexMap, placeStartingTerritories } from './map.js'
 import { startTurn, endTurn } from './turn-system.js'
@@ -190,8 +198,32 @@ function runNeuralAgentTurn(state, agent) {
       const vm = getValidMoves(state, fromKey)
       for (let mi = 0; mi < vm.moves.length; mi++) {
         const toKey       = vm.moves[mi]
+        const toHex = state.hexes[toKey]
+        const fromLevel = fromHex.unit.level
+        const isMerge = toHex && toHex.owner === playerId && !!toHex.unit
+        if (isMerge) {
+          const resultLevel = fromLevel + toHex.unit.level
+          if (resultLevel > 4) continue
+          if (!isMergeEconomicallySafe(state, fromKey, toKey, resultLevel)) continue
+        }
+
         const moveFeatures = encodeMoveFeatures(state, playerId, fromKey, toKey, vm.freeSet)
-        const score        = forwardPass(weights, stateFeatures, moveFeatures)
+        let score          = forwardPass(weights, stateFeatures, moveFeatures)
+
+        // Encourage cleaning own trees/palms so spread pressure stays controlled.
+        if (toHex && toHex.owner === playerId &&
+            (toHex.terrain === TERRAIN_TREE || toHex.terrain === TERRAIN_PALM)) {
+          const treeAge = toHex.treeAge || 0
+          let localThreat = 0
+          const nbrs = hexNeighborKeys(toHex.q, toHex.r)
+          for (let ni = 0; ni < nbrs.length; ni++) {
+            const nh = state.hexes[nbrs[ni]]
+            if (!nh || nh.owner !== playerId) continue
+            if (nh.terrain === TERRAIN_TREE || nh.terrain === TERRAIN_PALM) localThreat++
+          }
+          score += 1.25 + treeAge * 0.2 + localThreat * 0.15
+        }
+
         if (score > bestScore) {
           bestScore = score
           bestFrom  = fromKey
@@ -226,7 +258,9 @@ function neuralBuyUnits(state, player) {
       const upkeep = computeUpkeep(state, t)
       const netAfterBuy = income - (upkeep + 2)
       const bankAfterBuy = t.bank - PEASANT_COST
-      if (netAfterBuy < 0 && bankAfterBuy < Math.abs(netAfterBuy) * 3) continue
+      const treePressure = countTerritoryTreePressure(state, t)
+      if (netAfterBuy < 0 && bankAfterBuy < Math.abs(netAfterBuy) * 4) continue
+      if (treePressure === 0 && netAfterBuy <= 1 && bankAfterBuy < PEASANT_COST * 2) continue
 
       const placeKey = findFrontierPlacement(state, t, player)
       if (!placeKey) continue
@@ -274,19 +308,63 @@ function findFrontierPlacement(state, territory, player) {
   for (let i = 0; i < territory.hexKeys.length; i++) {
     const k = territory.hexKeys[i]
     const h = state.hexes[k]
-    if (!h || h.terrain !== TERRAIN_LAND || h.unit || h.structure) continue
+    if (!h || h.unit) continue
+    const isTree = h.terrain === TERRAIN_TREE || h.terrain === TERRAIN_PALM
+    const isLandPlacable = h.terrain === TERRAIN_LAND &&
+      (!h.structure || h.structure === STRUCTURE_GRAVESTONE)
+    if (!isTree && !isLandPlacable) continue
+
     const nbrs = hexNeighborKeys(h.q, h.r)
     let borderScore = 0
+    let ownTreeNbrs = 0
     for (let j = 0; j < nbrs.length; j++) {
       const nh = state.hexes[nbrs[j]]
       if (!nh || nh.terrain === TERRAIN_WATER) continue
       if (nh.owner !== player) {
         borderScore += (nh.owner !== null && nh.owner < state.numActivePlayers) ? 2 : 1
+      } else if (nh.terrain === TERRAIN_TREE || nh.terrain === TERRAIN_PALM) {
+        ownTreeNbrs++
       }
     }
-    if (borderScore > bestScore) { bestScore = borderScore; bestKey = k }
+
+    const treeAge = isTree ? (h.treeAge || 0) : 0
+    const clearingBonus = isTree ? 5 + treeAge * 2 : (h.structure === STRUCTURE_GRAVESTONE ? 2 : 0)
+    const score = borderScore * 2 + ownTreeNbrs + clearingBonus
+
+    if (score > bestScore) { bestScore = score; bestKey = k }
   }
   return bestKey
+}
+
+function isMergeEconomicallySafe(state, fromKey, toKey, resultLevel) {
+  const territory = getTerritoryForHex(state, toKey)
+  if (!territory) return true
+
+  const fromHex = state.hexes[fromKey]
+  const toHex = state.hexes[toKey]
+  if (!fromHex || !toHex || !fromHex.unit || !toHex.unit) return true
+
+  const income = computeIncome(state, territory)
+  const upkeep = computeUpkeep(state, territory)
+  const deltaUpkeep = UNIT_DEFS[resultLevel].upkeep -
+    UNIT_DEFS[fromHex.unit.level].upkeep -
+    UNIT_DEFS[toHex.unit.level].upkeep
+  const netAfterMerge = income - (upkeep + deltaUpkeep)
+  if (netAfterMerge >= 0) return true
+
+  const deficit = Math.abs(netAfterMerge)
+  return territory.bank >= deficit * 3
+}
+
+function countTerritoryTreePressure(state, territory) {
+  let pressure = 0
+  for (let i = 0; i < territory.hexKeys.length; i++) {
+    const h = state.hexes[territory.hexKeys[i]]
+    if (!h) continue
+    if (h.terrain !== TERRAIN_TREE && h.terrain !== TERRAIN_PALM) continue
+    pressure += 1 + (h.treeAge || 0)
+  }
+  return pressure
 }
 
 // ── Self-play ─────────────────────────────────────────────────────────────────

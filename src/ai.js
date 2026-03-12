@@ -5,7 +5,15 @@ import { getValidMoves, executeMove, PEASANT_COST, TOWER_COST } from './movement
 import { getTerritoryForHex } from './territory.js'
 import { computeIncome, computeUpkeep } from './economy.js'
 import { UNIT_DEFS } from './units.js'
-import { TERRAIN_LAND, TERRAIN_WATER, STRUCTURE_HUT, STRUCTURE_TOWER } from './constants.js'
+import {
+  TERRAIN_LAND,
+  TERRAIN_WATER,
+  TERRAIN_TREE,
+  TERRAIN_PALM,
+  STRUCTURE_HUT,
+  STRUCTURE_TOWER,
+  STRUCTURE_GRAVESTONE
+} from './constants.js'
 import { hexNeighborKeys } from './hex.js'
 import { getActiveNeuralAgent } from './agent-store.js'
 import { runNeuralAgentTurn } from './ai-rl.js'
@@ -73,13 +81,18 @@ function greedyBuyUnits(state, player) {
       const upkeep = computeUpkeep(state, t)
       const netAfterBuy = income - (upkeep + 2) // 2 = peasant upkeep per turn
       const bankAfterBuy = t.bank - PEASANT_COST
+      const treePressure = countTerritoryTreePressure(state, t)
 
       // Buy if: net income stays non-negative after the purchase,
       // OR the saved gold covers at least 3 turns of the resulting deficit.
       const sustainable = netAfterBuy >= 0
       const deficit = Math.abs(Math.min(0, netAfterBuy))
-      const hasRunway = bankAfterBuy >= deficit * 3
+      const hasRunway = bankAfterBuy >= deficit * 4
       if (!sustainable && !hasRunway) continue
+
+      // In healthy territories, avoid overbuying peasants if there is no immediate
+      // border pressure and no tree pressure to clean up.
+      if (treePressure === 0 && netAfterBuy <= 1 && bankAfterBuy < PEASANT_COST * 2) continue
 
       // Place the unit on the frontier hex closest to enemy/neutral territory.
       const placeKey = findFrontierPlacement(state, t, player)
@@ -104,21 +117,33 @@ function findFrontierPlacement(state, territory, player) {
   for (let i = 0; i < territory.hexKeys.length; i++) {
     const k = territory.hexKeys[i]
     const h = state.hexes[k]
-    if (!h || h.terrain !== TERRAIN_LAND || h.unit || h.structure) continue
+    if (!h || h.unit) continue
+    const isTree = h.terrain === TERRAIN_TREE || h.terrain === TERRAIN_PALM
+    const isLandPlacable = h.terrain === TERRAIN_LAND &&
+      (!h.structure || h.structure === STRUCTURE_GRAVESTONE)
+    if (!isTree && !isLandPlacable) continue
 
     // Count how many adjacent hexes are non-owned (border neighbours).
     const nbrs = hexNeighborKeys(h.q, h.r)
     let borderScore = 0
+    let ownTreeNbrs = 0
     for (let j = 0; j < nbrs.length; j++) {
       const nh = state.hexes[nbrs[j]]
       if (!nh || nh.terrain === TERRAIN_WATER) continue
       if (nh.owner !== player) {
         // Active enemy counts double (more urgent frontier)
         borderScore += (nh.owner !== null && nh.owner < state.numActivePlayers) ? 2 : 1
+      } else if (nh.terrain === TERRAIN_TREE || nh.terrain === TERRAIN_PALM) {
+        ownTreeNbrs++
       }
     }
-    if (borderScore > bestScore) {
-      bestScore = borderScore
+
+    const treeAge = isTree ? (h.treeAge || 0) : 0
+    const clearingBonus = isTree ? 5 + treeAge * 2 : (h.structure === STRUCTURE_GRAVESTONE ? 2 : 0)
+    const score = borderScore * 2 + ownTreeNbrs + clearingBonus
+
+    if (score > bestScore) {
+      bestScore = score
       bestKey = k
     }
   }
@@ -181,6 +206,8 @@ function scoreMoveGreedy(state, fromKey, toKey, vm, player) {
   const isNeutral = !isActiveEnemy && toHex.owner !== player
   const isFree = !!vm.freeSet[toKey]
   const isMerge = isOwnHex && !!toHex.unit
+  const isOwnTree = isOwnHex && (toHex.terrain === TERRAIN_TREE || toHex.terrain === TERRAIN_PALM)
+  const isOwnGravestone = isOwnHex && toHex.structure === STRUCTURE_GRAVESTONE
 
   // ── Capture enemy hut → splits + often bankrupts their territory ──
   if (isActiveEnemy && toHex.structure === STRUCTURE_HUT) {
@@ -216,9 +243,26 @@ function scoreMoveGreedy(state, fromKey, toKey, vm, player) {
   if (isMerge) {
     const resultLevel = attackerLevel + toHex.unit.level
     if (resultLevel > MAX_UNIT_LEVEL) return 0
+    if (!isMergeEconomicallySafe(state, fromKey, toKey, resultLevel)) return 0
     // Extra value when the merged unit can break a defended position
     return 400 + resultLevel * 120
   }
+
+  // ── Clear own tree/palm: preserve future income and stop spread pressure ──
+  if (isOwnTree) {
+    const treeAge = toHex.treeAge || 0
+    let localThreat = 0
+    const nbrs = hexNeighborKeys(toHex.q, toHex.r)
+    for (let i = 0; i < nbrs.length; i++) {
+      const nh = state.hexes[nbrs[i]]
+      if (!nh || nh.owner !== player) continue
+      if (nh.terrain === TERRAIN_TREE || nh.terrain === TERRAIN_PALM) localThreat++
+    }
+    return 130 + treeAge * 15 + localThreat * 10
+  }
+
+  // ── Clear own gravestone to recover buildable space ──
+  if (isOwnGravestone) return 60
 
   // ── Free reposition: only worthwhile if it moves toward the frontier ──
   if (isFree) {
@@ -296,6 +340,37 @@ function distToNearestTarget(state, q, r, player) {
     if (d < minDist) minDist = d
   }
   return minDist
+}
+
+function isMergeEconomicallySafe(state, fromKey, toKey, resultLevel) {
+  const territory = getTerritoryForHex(state, toKey)
+  if (!territory) return true
+
+  const fromHex = state.hexes[fromKey]
+  const toHex = state.hexes[toKey]
+  if (!fromHex || !toHex || !fromHex.unit || !toHex.unit) return true
+
+  const income = computeIncome(state, territory)
+  const upkeep = computeUpkeep(state, territory)
+  const deltaUpkeep = UNIT_DEFS[resultLevel].upkeep -
+    UNIT_DEFS[fromHex.unit.level].upkeep -
+    UNIT_DEFS[toHex.unit.level].upkeep
+  const netAfterMerge = income - (upkeep + deltaUpkeep)
+  if (netAfterMerge >= 0) return true
+
+  const deficit = Math.abs(netAfterMerge)
+  return territory.bank >= deficit * 3
+}
+
+function countTerritoryTreePressure(state, territory) {
+  let pressure = 0
+  for (let i = 0; i < territory.hexKeys.length; i++) {
+    const h = state.hexes[territory.hexKeys[i]]
+    if (!h) continue
+    if (h.terrain !== TERRAIN_TREE && h.terrain !== TERRAIN_PALM) continue
+    pressure += 1 + (h.treeAge || 0)
+  }
+  return pressure
 }
 
 export { isAIPlayer, runAITurn, appendToLog }
