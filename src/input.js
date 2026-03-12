@@ -49,6 +49,7 @@ function handleHexClick(state, key) {
           // Merged unit is moved only if the existing unit was already moved.
           const newLevel = mergedLevel(buyLevel, hex.unit.level)
           hex.unit = { level: newLevel, moved: hex.unit.moved }
+          buyTerritory.bank -= buyCost
         } else {
           const isCapture = hex.owner !== player
           const wasTreeOrPalm = hex.terrain === TERRAIN_TREE || hex.terrain === TERRAIN_PALM
@@ -58,9 +59,12 @@ function handleHexClick(state, key) {
           if (isCapture) hex.owner = player
           // Clearing tree/palm or gravestone is an action (moved); plain own land is fresh
           hex.unit = { level: buyLevel, moved: isCapture || wasTreeOrPalm || wasGravestone }
+          // Deduct cost before recomputeTerritories — recompute replaces territory objects,
+          // making any reference held in buyTerritory stale.  Deducting first ensures
+          // getBankForHut picks up the correct reduced balance for the new territory.
+          buyTerritory.bank -= buyCost
           if (isCapture) recomputeTerritories(state)
         }
-        buyTerritory.bank -= buyCost
       }
     }
 
