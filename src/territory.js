@@ -1,7 +1,7 @@
 // Territory detection, management, and defensive zone calculations
 
 import { hexNeighborKeys } from './hex.js'
-import { TERRAIN_WATER, TERRAIN_LAND, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
+import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_HUT, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
 import { UNIT_DEFS } from './units.js'
 
 // Recompute all territories from the current hex ownership map.
@@ -108,10 +108,22 @@ function recomputeTerritories(state) {
       }
     }
 
-    // Single-hex territory should not have a hut
+    // Single-hex territory: the hut has no purpose — destroy it and convert the
+    // hex to a tree or palm so the tile returns to neutral, impassable terrain.
+    // Palm is used if the hex borders water; otherwise a regular tree.
     if (component.length === 1 && hutHexKey) {
-      hexes[hutHexKey].structure = null
-      hutHexKey = null
+      const orphan = hexes[hutHexKey]
+      orphan.structure = null
+      orphan.unit = null
+      orphan.owner = null
+      const nearWater = hexNeighborKeys(orphan.q, orphan.r).some(function (nk) {
+        const n = hexes[nk]
+        return !n || n.terrain === TERRAIN_WATER
+      })
+      orphan.terrain = nearWater ? TERRAIN_PALM : TERRAIN_TREE
+      orphan.treeAge = 0
+      // Hex is now neutral terrain — skip adding it to newTerritories.
+      continue
     }
 
     newTerritories.push({
