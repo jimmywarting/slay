@@ -14,12 +14,16 @@ const DRAG_THRESHOLD = 6
 // Minimum distance between two touch points to process a pinch gesture
 const MIN_PINCH_DISTANCE = 1
 
-function initInput(canvasEl, state, uiUpdater) {
+// Accept a getter function (() => currentGameState) so that input events
+// always act on the live state even after a New Game replaces the object.
+function initInput(canvasEl, getState, uiUpdater) {
   if (typeof uiUpdater !== 'function') throw new Error('initInput: uiUpdater must be a function')
   updateUI = uiUpdater
 
   // ── Shared helper: fire a game tap at canvas-local coordinates ──────────────
   function fireTap(canvasX, canvasY) {
+    const state = getState()
+    if (!state) return
     const worldX = (canvasX - view.panX) / view.zoom
     const worldY = (canvasY - view.panY) / view.zoom
     const hc = pixelToHex(worldX, worldY)
@@ -54,7 +58,7 @@ function initInput(canvasEl, state, uiUpdater) {
     if (mouseDragging) {
       view.panX = panStartX + dx
       view.panY = panStartY + dy
-      render(state)
+      render(getState())
     }
   })
 
@@ -81,7 +85,7 @@ function initInput(canvasEl, state, uiUpdater) {
     view.panX      = mx + (view.panX - mx) * zf
     view.panY      = my + (view.panY - my) * zf
     view.zoom      = newZoom
-    render(state)
+    render(getState())
   }, { passive: false })
 
   // ── Touch: one-finger pan + two-finger pinch-zoom + tap ─────────────────
@@ -114,7 +118,7 @@ function initInput(canvasEl, state, uiUpdater) {
       }
       view.panX += dx
       view.panY += dy
-      render(state)
+      render(getState())
 
     } else if (touches.length === 2 && lastTouches.length >= 2) {
       // ── Two-finger pinch-zoom (+ implicit pan from midpoint shift) ────────
@@ -140,7 +144,7 @@ function initInput(canvasEl, state, uiUpdater) {
       view.panX = mx - (prevMx - view.panX) * zf
       view.panY = my - (prevMy - view.panY) * zf
       view.zoom = newZoom
-      render(state)
+      render(getState())
     }
 
     lastTouches = touches

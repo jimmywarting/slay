@@ -1,7 +1,7 @@
 // Service Worker for Slay – Turn-Based Strategy
 // Strategy: cache-first for all local assets, network-only for CDN (TF.js)
 
-const CACHE_VERSION = 'slay-v1'
+const CACHE_VERSION = 'slay-v2'
 
 // All local files that make up the game shell
 const PRECACHE_URLS = [

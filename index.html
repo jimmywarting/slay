@@ -292,9 +292,180 @@
         min-width: 180px;
       }
     }
+
+    /* ── Start screen overlay ───────────────────────────────────────────────── */
+    #startScreen {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: #0a1a28;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .start-panel {
+      background: #1a2b3c;
+      border: 2px solid #2c3e50;
+      border-radius: 14px;
+      padding: 32px 28px 28px;
+      max-width: 460px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .start-panel h1 {
+      font-size: 3.2rem;
+      font-weight: 900;
+      color: #dbc447;
+      letter-spacing: 0.12em;
+      margin-bottom: 4px;
+      text-shadow: 0 2px 12px rgba(219,196,71,0.35);
+    }
+
+    .start-panel .start-subtitle {
+      font-size: 0.9rem;
+      color: #7f8c8d;
+      margin-bottom: 28px;
+    }
+
+    .start-section {
+      margin-bottom: 22px;
+      text-align: left;
+    }
+
+    .start-section h3 {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #7f8c8d;
+      margin-bottom: 10px;
+    }
+
+    .start-btn-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .start-size-btn,
+    .start-players-btn {
+      flex: 1;
+      padding: 9px 10px;
+      border: 2px solid #2c3e50;
+      border-radius: 8px;
+      background: #0f2030;
+      color: #bdc3c7;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      min-height: 40px;
+    }
+
+    .start-size-btn:hover,
+    .start-players-btn:hover {
+      border-color: #dbc447;
+      color: #fff;
+    }
+
+    .start-size-btn.active,
+    .start-players-btn.active {
+      border-color: #dbc447;
+      background: #27381a;
+      color: #dbc447;
+    }
+
+    .start-size-hint {
+      font-size: 0.68rem;
+      color: #566573;
+      margin-top: 6px;
+    }
+
+    #startPlayerList {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-top: 2px;
+    }
+
+    .player-preview-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: #ecf0f1;
+    }
+
+    .player-preview-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .player-preview-role {
+      color: #7f8c8d;
+      font-size: 0.78rem;
+    }
+
+    #btnStartGame {
+      width: 100%;
+      padding: 14px;
+      margin-top: 8px;
+      background: #dbc447;
+      color: #0f2030;
+      border: none;
+      border-radius: 8px;
+      font-size: 1.1rem;
+      font-weight: 800;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: background 0.15s;
+    }
+
+    #btnStartGame:hover {
+      background: #f0d84e;
+    }
   </style>
 </head>
 <body>
+
+<!-- ── Start screen overlay ───────────────────────────────────────────────── -->
+<div id="startScreen">
+  <div class="start-panel">
+    <h1>⚔️ SLAY</h1>
+    <p class="start-subtitle">Turn-Based Hex Strategy</p>
+
+    <div class="start-section">
+      <h3>Map Size</h3>
+      <div class="start-btn-row">
+        <button class="start-size-btn active" data-size="small">Small</button>
+        <button class="start-size-btn" data-size="medium">Medium</button>
+        <button class="start-size-btn" data-size="large">Large</button>
+      </div>
+      <div class="start-size-hint">Small: 7-ring hex &nbsp;·&nbsp; Medium: 11-ring hex &nbsp;·&nbsp; Large: 16-ring hex</div>
+    </div>
+
+    <div class="start-section">
+      <h3>Number of Players (1 human + AI opponents)</h3>
+      <div class="start-btn-row">
+        <button class="start-players-btn" data-players="2">2</button>
+        <button class="start-players-btn" data-players="3">3</button>
+        <button class="start-players-btn" data-players="4">4</button>
+        <button class="start-players-btn" data-players="5">5</button>
+        <button class="start-players-btn active" data-players="6">6</button>
+      </div>
+    </div>
+
+    <div class="start-section">
+      <h3>Players</h3>
+      <div id="startPlayerList"></div>
+    </div>
+
+    <button id="btnStartGame">⚔️ Start Game</button>
+  </div>
+</div>
 
 <canvas id="gameCanvas"></canvas>
 

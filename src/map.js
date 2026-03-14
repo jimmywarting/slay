@@ -1,16 +1,25 @@
 // Map generation: hexagonal island with terrain and player starting areas
 
-import { hexKey, hexNeighborKeys } from './hex.js'
+import { hexKey, hexNeighborKeys, hexDistance } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_HUT } from './constants.js'
 
-const MAP_RADIUS_DEFAULT = 7
-const NUM_PLAYERS = 6   // always 6 players on the map
+// Named map size presets (radius in hex rings)
+const MAP_SIZES = { small: 7, medium: 11, large: 16 }
+
+const MAP_RADIUS_DEFAULT = MAP_SIZES.small
+const NUM_PLAYERS = 6   // always 6 colour zones on the map
 const SEEDS_PER_PLAYER = 3  // each player gets 3 random starting seeds → multiple territories
 
 // ── Grid creation ─────────────────────────────────────────────────────────────
 
-function generateHexMap(radius) {
+// generateHexMap(radius, waterDensity)
+//   radius       – hex grid radius (number of rings from centre)
+//   waterDensity – fraction of interior land to convert to random water (0–1).
+//                  Creates inland lakes, channels and potential islands.
+//                  Defaults to 0.22 which gives a natural archipelago feel.
+function generateHexMap(radius, waterDensity) {
   const R = radius || MAP_RADIUS_DEFAULT
+  const density = waterDensity ?? 0.22
   const hexes = {}
 
   for (let q = -R; q <= R; q++) {
@@ -30,7 +39,7 @@ function generateHexMap(radius) {
     }
   }
 
-  // Erode some outer-ring land hexes to water for a more natural coastline
+  // Coastal erosion: naturally vary the shoreline
   for (const key in hexes) {
     const hex = hexes[key]
     if (hex.terrain !== TERRAIN_LAND) continue
@@ -40,7 +49,135 @@ function generateHexMap(radius) {
     }
   }
 
+  // Random interior water — creates lakes, channels, and potential islands
+  if (density > 0) {
+    for (const key in hexes) {
+      const hex = hexes[key]
+      if (hex.terrain !== TERRAIN_LAND) continue
+      if (Math.random() < density) {
+        hex.terrain = TERRAIN_WATER
+      }
+    }
+  }
+
+  // Guarantee all land hexes are reachable — bridge any isolated islands
+  ensureLandConnectivity(hexes)
+
   return hexes
+}
+
+// ── Land connectivity ─────────────────────────────────────────────────────────
+
+// Find all connected land components (returns array of arrays of hex keys).
+function findLandComponents(hexes) {
+  const visited = {}
+  const components = []
+
+  for (const startKey in hexes) {
+    if (visited[startKey]) continue
+    const startHex = hexes[startKey]
+    if (startHex.terrain === TERRAIN_WATER) continue
+
+    const component = []
+    const queue = [startKey]
+    visited[startKey] = true
+
+    while (queue.length > 0) {
+      const k = queue.shift()
+      component.push(k)
+      const h = hexes[k]
+      const nbrs = hexNeighborKeys(h.q, h.r)
+      for (let i = 0; i < nbrs.length; i++) {
+        const nk = nbrs[i]
+        if (!visited[nk] && hexes[nk] && hexes[nk].terrain !== TERRAIN_WATER) {
+          visited[nk] = true
+          queue.push(nk)
+        }
+      }
+    }
+
+    components.push(component)
+  }
+
+  // Sort largest first
+  components.sort(function (a, b) { return b.length - a.length })
+  return components
+}
+
+// BFS shortest path between two hex keys (all hexes treated as passable).
+// Returns the array of keys along the path (inclusive of start and end).
+function bfsPath(hexes, startKey, endKey) {
+  if (startKey === endKey) return [startKey]
+
+  const prev = {}
+  prev[startKey] = null
+  const queue = [startKey]
+
+  while (queue.length > 0) {
+    const k = queue.shift()
+    if (k === endKey) break
+    const h = hexes[k]
+    const nbrs = hexNeighborKeys(h.q, h.r)
+    for (let i = 0; i < nbrs.length; i++) {
+      const nk = nbrs[i]
+      if (!(nk in prev) && hexes[nk]) {
+        prev[nk] = k
+        queue.push(nk)
+      }
+    }
+  }
+
+  // Reconstruct path from end → start
+  const path = []
+  let cur = endKey
+  while (cur !== null && cur !== undefined) {
+    path.unshift(cur)
+    cur = prev[cur]
+  }
+  return path
+}
+
+// Bridge all disconnected land components to the largest component using land
+// paths, so every land hex is reachable from every other land hex.
+function ensureLandConnectivity(hexes) {
+  let components = findLandComponents(hexes)
+
+  while (components.length > 1) {
+    const main = components[0]
+
+    // Find the closest pair of hexes between the main component and any other
+    let bestDist = Infinity
+    let bridgeFrom = null
+    let bridgeTo   = null
+
+    for (let ci = 1; ci < components.length; ci++) {
+      const comp = components[ci]
+      for (let i = 0; i < comp.length; i++) {
+        const ha = hexes[comp[i]]
+        for (let j = 0; j < main.length; j++) {
+          const hb = hexes[main[j]]
+          const d = hexDistance(ha.q, ha.r, hb.q, hb.r)
+          if (d < bestDist) {
+            bestDist   = d
+            bridgeFrom = comp[i]
+            bridgeTo   = main[j]
+          }
+        }
+      }
+    }
+
+    if (bridgeFrom && bridgeTo) {
+      // Convert every water hex along the BFS path to land
+      const path = bfsPath(hexes, bridgeFrom, bridgeTo)
+      for (let i = 0; i < path.length; i++) {
+        if (hexes[path[i]].terrain === TERRAIN_WATER) {
+          hexes[path[i]].terrain = TERRAIN_LAND
+        }
+      }
+    }
+
+    components = findLandComponents(hexes)
+  }
 }
 
 // ── Terrain decoration ────────────────────────────────────────────────────────
@@ -262,4 +399,4 @@ function shuffleArray(arr) {
   }
 }
 
-export { generateHexMap, placeStartingTerritories, MAP_RADIUS_DEFAULT }
+export { generateHexMap, placeStartingTerritories, MAP_SIZES, MAP_RADIUS_DEFAULT }

@@ -1,7 +1,7 @@
 // Main game orchestrator: state creation, button handlers, UI updates
 
 import { PLAYER_HEX_COLORS, initRenderer, resizeCanvas, render } from './renderer.js'
-import { generateHexMap, placeStartingTerritories } from './map.js'
+import { generateHexMap, placeStartingTerritories, MAP_SIZES } from './map.js'
 import { PEASANT_COST, TOWER_COST, getBuyPlacementHexes } from './movement.js'
 import { startTurn, endTurn, undoTurn } from './turn-system.js'
 import { initInput } from './input.js'
@@ -13,14 +13,66 @@ import { isAIPlayer, runAITurn, appendToLog } from './ai.js'
 import { getActiveNeuralAgent } from './agent-store.js'
 import { startTraining, stopTraining, resetTraining, isTrainingActive, getTrainingStats } from './train.js'
 
-const NUM_PLAYERS = 6       // number of active players (human + AI)
-const NUM_TOTAL_PLAYERS = 6 // total players always present on the map
-const AI_PLAYERS = [1,2,3,4,5]      // player indices that are AI-controlled
+const NUM_TOTAL_PLAYERS = 6 // colour zones always on the map
 const PLAYER_NAMES = ['Olive', 'Forest', 'Gold', 'Fern', 'Sage', 'Lime']
+
+// Current game configuration (updated by the start screen)
+let gameConfig = { mapSize: 'small', numActivePlayers: 6 }
 
 let gameState = null
 let watchMode = false       // true while watch loop is running
 let watchLoopActive = false // guards against multiple concurrent loops
+
+// Water density constants — controls how many random interior water hexes are placed
+const MIN_WATER_DENSITY  = 0.10  // floor for low player counts
+const BASE_WATER_DENSITY = 0.26  // default density for max players
+const DENSITY_SCALE_STEP = 0.02  // density reduction per player below maximum
+const MAX_PLAYERS        = 6
+
+// Calculate water density for the given number of active players.
+// Fewer players → slightly less water so there's enough land for everyone.
+function calcWaterDensity(numActivePlayers) {
+  return Math.max(MIN_WATER_DENSITY, BASE_WATER_DENSITY - (MAX_PLAYERS - numActivePlayers) * DENSITY_SCALE_STEP)
+}
+
+// ── Start screen ──────────────────────────────────────────────────────────────
+
+function showStartScreen() {
+  // Pause any running watch loop without creating a new gameState
+  watchMode = false
+
+  const screen = document.getElementById('startScreen')
+  if (!screen) return
+
+  // Populate the player preview list based on current selections
+  refreshPlayerPreview()
+  screen.style.display = 'flex'
+}
+
+function hideStartScreen() {
+  const screen = document.getElementById('startScreen')
+  if (screen) screen.style.display = 'none'
+}
+
+// Re-render the coloured player list in the start screen
+function refreshPlayerPreview() {
+  const listEl = document.getElementById('startPlayerList')
+  if (!listEl) return
+
+  const n = gameConfig.numActivePlayers
+  let html = ''
+  for (let i = 0; i < n; i++) {
+    const color = PLAYER_HEX_COLORS[i % PLAYER_HEX_COLORS.length]
+    const isHuman = i === 0
+    const icon  = isHuman ? '🧑' : '🤖'
+    const label = isHuman ? 'You' : 'AI'
+    html += '<div class="player-preview-item">' +
+      '<span class="player-preview-dot" style="background:' + color + '"></span>' +
+      icon + ' <strong style="color:' + color + '">' + PLAYER_NAMES[i] + '</strong>' +
+      ' <span class="player-preview-role">(' + label + ')</span></div>'
+  }
+  listEl.innerHTML = html
+}
 
 // ── Initialisation ────────────────────────────────────────────────────────────
 
@@ -28,15 +80,12 @@ function initGame() {
   const canvasEl = document.getElementById('gameCanvas')
   initRenderer(canvasEl)
 
-  gameState = createGameState(NUM_PLAYERS)
-  initInput(canvasEl, gameState, updateUI)
+  // Pass a getter so input always uses the live gameState reference
+  initInput(canvasEl, function () { return gameState }, updateUI)
 
-  render(gameState)
-  updateUI(gameState)
-
-  // Button handlers
+  // Button handlers — guard against null gameState (before first game starts)
   document.getElementById('btnEndTurn').addEventListener('click', async function () {
-    if (gameState.gameOver) return
+    if (!gameState || gameState.gameOver) return
     appendToLog(gameState, 'Turn ' + (gameState.turn + 1) + ': ' +
       gameState.players[gameState.activePlayer].name + ' ended their turn')
     endTurn(gameState)
@@ -47,7 +96,7 @@ function initGame() {
   })
 
   document.getElementById('btnUndo').addEventListener('click', function () {
-    if (gameState.gameOver) return
+    if (!gameState || gameState.gameOver) return
     undoTurn(gameState)
     render(gameState)
     updateUI(gameState)
@@ -59,7 +108,7 @@ function initGame() {
       const btn = document.getElementById(BUY_BUTTON_IDS[level - 1])
       if (btn) {
         btn.addEventListener('click', function () {
-          if (gameState.gameOver) return
+          if (!gameState || gameState.gameOver) return
           handleBuyUnit(gameState, level)
         })
       }
@@ -67,13 +116,13 @@ function initGame() {
   }
 
   document.getElementById('btnBuildTower').addEventListener('click', function () {
-    if (gameState.gameOver) return
+    if (!gameState || gameState.gameOver) return
     handleBuildTower(gameState)
   })
 
   window.addEventListener('resize', function () {
     resizeCanvas()
-    render(gameState)
+    if (gameState) render(gameState)
   })
 
   const btnWatchAI = document.getElementById('btnWatchAI')
@@ -125,12 +174,56 @@ function initGame() {
   if (btnNewGame) {
     btnNewGame.addEventListener('click', function () {
       stopWatchMode()
+      showStartScreen()
     })
   }
+
+  // ── Start screen button wiring ─────────────────────────────────────────────
+  const sizeButtons   = document.querySelectorAll('.start-size-btn')
+  const playerButtons = document.querySelectorAll('.start-players-btn')
+  const btnStartGame  = document.getElementById('btnStartGame')
+
+  sizeButtons.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      sizeButtons.forEach(function (b) { b.classList.remove('active') })
+      btn.classList.add('active')
+      gameConfig.mapSize = btn.dataset.size
+      refreshPlayerPreview()
+    })
+  })
+
+  playerButtons.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      playerButtons.forEach(function (b) { b.classList.remove('active') })
+      btn.classList.add('active')
+      gameConfig.numActivePlayers = parseInt(btn.dataset.players, 10)
+      refreshPlayerPreview()
+    })
+  })
+
+  if (btnStartGame) {
+    btnStartGame.addEventListener('click', function () {
+      hideStartScreen()
+      startNewGame()
+    })
+  }
+
+  // Show the start screen instead of jumping straight into the game
+  showStartScreen()
 }
 
-function createGameState(numActivePlayers) {
-  // Always create all 6 players; only the first numActivePlayers are active
+function startNewGame() {
+  const numActive = gameConfig.numActivePlayers
+  const radius    = MAP_SIZES[gameConfig.mapSize] || MAP_SIZES.small
+
+  gameState = createGameState(numActive, radius, calcWaterDensity(numActive))
+  render(gameState)
+  updateUI(gameState)
+  runPendingAITurns()
+}
+
+function createGameState(numActivePlayers, radius, waterDensity) {
+  // Always create all 6 colour slots; only the first numActivePlayers are active
   const players = []
   for (let i = 0; i < NUM_TOTAL_PLAYERS; i++) {
     players.push({
@@ -140,8 +233,12 @@ function createGameState(numActivePlayers) {
     })
   }
 
-  const hexes = generateHexMap()
+  const hexes = generateHexMap(radius, waterDensity)
   const territories = placeStartingTerritories(hexes, numActivePlayers)
+
+  // AI controls every player except the human (player 0)
+  const aiPlayers = []
+  for (let i = 1; i < numActivePlayers; i++) aiPlayers.push(i)
 
   const state = {
     players: players,
@@ -160,7 +257,7 @@ function createGameState(numActivePlayers) {
     message: '',
     gameOver: false,
     winner: null,
-    aiPlayers: AI_PLAYERS,
+    aiPlayers: aiPlayers,
     actionLog: [],
     aiThinking: false
   }
@@ -251,6 +348,7 @@ function handleBuildTower(state) {
 // ── UI updates ────────────────────────────────────────────────────────────────
 
 function updateUI(state) {
+  if (!state) return
   const player = state.players[state.activePlayer]
   const aiTurn = isAIPlayer(state, state.activePlayer)
 
@@ -404,10 +502,15 @@ async function startWatchMode() {
   watchMode = true
   watchLoopActive = true
 
-  // All active player slots become AI-controlled.
-  const aiPlayerIndices = Array.from({ length: NUM_PLAYERS }, function (_, i) { return i })
+  const numActive    = gameConfig.numActivePlayers
+  const radius       = MAP_SIZES[gameConfig.mapSize] || MAP_SIZES.small
+  const waterDensity = calcWaterDensity(numActive)
 
-  gameState = createGameState(NUM_PLAYERS)
+  // All active player slots become AI-controlled.
+  const aiPlayerIndices = []
+  for (let i = 0; i < numActive; i++) aiPlayerIndices.push(i)
+
+  gameState = createGameState(numActive, radius, waterDensity)
   gameState.aiPlayers = aiPlayerIndices
   render(gameState)
   updateUI(gameState)
@@ -422,42 +525,38 @@ async function startWatchMode() {
     await new Promise(function (resolve) { setTimeout(resolve, 2500) })
     if (!watchMode) break
 
-    gameState = createGameState(NUM_PLAYERS)
+    gameState = createGameState(numActive, radius, waterDensity)
     gameState.aiPlayers = aiPlayerIndices
     render(gameState)
     updateUI(gameState)
   }
 
   watchLoopActive = false
-  updateUI(gameState)
+  if (gameState) updateUI(gameState)
 }
 
-// Stop the watch loop and reset to a normal human-vs-AI game.
+// Stop the watch loop.  The caller is responsible for showing the start screen
+// or creating a new game as needed.
 function stopWatchMode() {
   watchMode = false
-  // Replacing gameState makes the running loop's isAIPlayer check fail on the
-  // very next iteration, cleanly aborting runPendingAITurns without extra flags.
-  gameState = createGameState(NUM_PLAYERS)
-  render(gameState)
-  updateUI(gameState)
 }
 
 // Run AI turns for as long as the active player is AI-controlled.
 // Shows "thinking..." in the UI while waiting for the LLM response.
 async function runPendingAITurns() {
-  while (!gameState.gameOver && isAIPlayer(gameState, gameState.activePlayer)) {
+  while (gameState && !gameState.gameOver && isAIPlayer(gameState, gameState.activePlayer)) {
     gameState.aiThinking = true
     render(gameState)
     updateUI(gameState)
 
     // Abort immediately if gameState was replaced before we even sleep.
-    if (!isAIPlayer(gameState, gameState.activePlayer)) break
+    if (!gameState || !isAIPlayer(gameState, gameState.activePlayer)) break
 
     // Small pause so the player can see the transition before the AI acts
     await new Promise(function (resolve) { setTimeout(resolve, 500) })
 
     // Abort if gameState was replaced (e.g. stop-watch / new-game clicked) during the sleep.
-    if (!isAIPlayer(gameState, gameState.activePlayer)) break
+    if (!gameState || !isAIPlayer(gameState, gameState.activePlayer)) break
 
     await runAITurn(gameState)
 
