@@ -13,9 +13,9 @@ import { isAIPlayer, runAITurn, appendToLog } from './ai.js'
 import { getActiveNeuralAgent } from './agent-store.js'
 import { startTraining, stopTraining, resetTraining, isTrainingActive, getTrainingStats } from './train.js'
 
-const NUM_PLAYERS = 2       // number of active players (human + AI)
+const NUM_PLAYERS = 6       // number of active players (human + AI)
 const NUM_TOTAL_PLAYERS = 6 // total players always present on the map
-const AI_PLAYERS = [1]      // player indices that are AI-controlled
+const AI_PLAYERS = [1,2,3,4,5]      // player indices that are AI-controlled
 const PLAYER_NAMES = ['Olive', 'Forest', 'Gold', 'Fern', 'Sage', 'Lime']
 
 let gameState = null
@@ -546,17 +546,33 @@ function updateTrainingUI(stats) {
   const lossPct = totalDecided > 0 ? Math.round(100 * stats.losses / totalDecided) : 0
   const drwPct  = totalDecided > 0 ? Math.round(100 * stats.draws / totalDecided) : 0
 
+  const genTotal = (stats.genWins || 0) + (stats.genLosses || 0) + (stats.genDraws || 0)
+  const genWinPct  = genTotal > 0 ? Math.round(100 * (stats.genWins || 0) / genTotal) : 0
+  const genLossPct = genTotal > 0 ? Math.round(100 * (stats.genLosses || 0) / genTotal) : 0
+  const genDrawPct = genTotal > 0 ? Math.round(100 * (stats.genDraws || 0) / genTotal) : 0
+
   progressEl.innerHTML =
     '<div style="color:#27ae60">' + modelStatus + '</div>' +
     '<div style="margin-top:4px">' +
       'Gen <b>' + stats.generation + '</b> &nbsp;|&nbsp; Games <b>' + stats.totalGames + '</b>' +
     '</div>' +
+    '<div style="color:#95a5a6">' +
+      'Current gen progress: <b>' + (stats.genGamesDone || 0) + '</b>/<b>' + (stats.genGamesPlanned || 0) + '</b>' +
+    '</div>' +
     '<div>' +
       'Best fitness: <b>' + (stats.bestFitness || 0).toFixed(1) + '</b>' +
       ' &nbsp;All-time: <b>' + (stats.bestFitnessEver || 0).toFixed(1) + '</b>' +
     '</div>' +
+    (genTotal > 0
+      ? '<div>Gen W/L/D: ' +
+          '<span style="color:#2ecc71"><b>' + (stats.genWins || 0) + '</b></span>/' +
+          '<span style="color:#e74c3c"><b>' + (stats.genLosses || 0) + '</b></span>/' +
+          '<span style="color:#95a5a6"><b>' + (stats.genDraws || 0) + '</b></span>' +
+          ' (' + genWinPct + '%/' + genLossPct + '%/' + genDrawPct + '%)' +
+        '</div>'
+      : '') +
     (totalDecided > 0
-      ? '<div>W/L/D: ' +
+      ? '<div>Total W/L/D: ' +
           '<span style="color:#2ecc71"><b>' + stats.wins + '</b></span>/' +
           '<span style="color:#e74c3c"><b>' + stats.losses + '</b></span>/' +
           '<span style="color:#95a5a6"><b>' + stats.draws + '</b></span>' +
@@ -589,4 +605,3 @@ function updateTrainingUI(stats) {
 
 
 export { updateUI }
-

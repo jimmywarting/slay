@@ -20,11 +20,15 @@ import { saveNeuralAgent, clearSavedAgent, getActiveNeuralAgent } from './agent-
 
 // ── Hyper-parameters ──────────────────────────────────────────────────────────
 
-const POP_SIZE       = 8   // agents per generation
-const GAMES_PER_GEN  = 8   // matchups to play each generation
-const NUM_WORKERS    = 4   // parallel web workers
-const MUT_STRENGTH   = 0.05 // σ for Gaussian weight mutation
-const ELITE_FRACTION = 0.5  // fraction of population kept unchanged
+const POP_SIZE       = 24  // agents per generation
+const GAMES_PER_GEN  = 5  // matchups to play each generation
+const NUM_WORKERS    = 2
+const MUT_BASE       = 0.04  // starting mutation strength
+const MUT_MIN        = 0.01
+const MUT_MAX        = 0.12
+const ELITE_FRACTION = 0.25  // fraction of population kept unchanged
+const IMMIGRANT_RATE = 0.1   // random fresh individuals per generation
+const MAX_MATCH_RETRIES = 2
 
 // ── Runtime state ─────────────────────────────────────────────────────────────
 
@@ -35,9 +39,16 @@ let totalGames      = 0
 let bestFitness     = 0
 let bestFitnessEver = 0
 let lastSavedGen    = -1  // generation at which the model was last saved to localStorage
+let stagnationGens  = 0
+let currentMutRate  = MUT_BASE
 let wins            = 0   // agent-1 wins across all self-play games
 let losses          = 0   // agent-1 losses (= agent-2 wins)
 let draws           = 0
+let genWins         = 0
+let genLosses       = 0
+let genDraws        = 0
+let genGamesDone    = 0
+let genGamesPlanned = 0
 let fitnessHistory  = []  // { gen, fitness }[] — one entry per generation
 let workerPool      = []
 let running         = false
@@ -124,57 +135,134 @@ function runGeneration() {
   const fitAccum  = new Float32Array(POP_SIZE)
   const gamesCount = new Int32Array(POP_SIZE)
 
-  // Build a set of matchups: each individual plays ≈ GAMES_PER_GEN / POP_SIZE games
-  const matchups = []
-  for (let i = 0; i < GAMES_PER_GEN; i++) {
-    const a = i % POP_SIZE
-    const b = (i + Math.floor(POP_SIZE / 2)) % POP_SIZE
-    matchups.push({ a: a, b: b, id: i })
-  }
+  const matchups = buildMatchups()
+
+  genWins = 0
+  genLosses = 0
+  genDraws = 0
+  genGamesDone = 0
+  genGamesPlanned = matchups.length
 
   let completed = 0
 
-  for (let mi = 0; mi < matchups.length; mi++) {
-    const m      = matchups[mi]
-    const worker = workerPool[mi % workerPool.length]
+  let nextMatch = 0
 
-    // Clone weights into new buffers so they can be transferred
-    const buf1 = population[m.a].slice()
-    const buf2 = population[m.b].slice()
+  function finishGenerationIfDone() {
+    if (completed < matchups.length) return
+    for (let i = 0; i < POP_SIZE; i++) {
+      fitnessScores[i] = gamesCount[i] > 0 ? fitAccum[i] / gamesCount[i] : 0
+    }
+    evolve()
+    if (onUpdate) onUpdate(getTrainingStats())
+    if (running) setTimeout(runGeneration, 0)
+  }
 
-    worker.onmessage = function (evt) {
-      if (!running) return
-      const { roundId, fitness1, fitness2, winner } = evt.data
-      if (roundId !== m.id) return  // stale result from prior generation
+  function finalizeMatch(m, fitness1, fitness2, winner) {
+    fitAccum[m.a] += fitness1
+    fitAccum[m.b] += fitness2
+    gamesCount[m.a]++
+    gamesCount[m.b]++
+    totalGames++
+    completed++
+    genGamesDone++
 
-      fitAccum[m.a]  += fitness1
-      fitAccum[m.b]  += fitness2
-      gamesCount[m.a]++
-      gamesCount[m.b]++
-      totalGames++
-      completed++
-
-      // Win/loss/draw tracking from agent m.a's perspective in each matchup
-      if (winner === m.a)       wins++
-      else if (winner === m.b)  losses++
-      else                      draws++
-
-      if (completed >= matchups.length) {
-        // Normalise
-        for (let i = 0; i < POP_SIZE; i++) {
-          fitnessScores[i] = gamesCount[i] > 0 ? fitAccum[i] / gamesCount[i] : 0
-        }
-        evolve()
-        if (onUpdate) onUpdate(getTrainingStats())
-        if (running) setTimeout(runGeneration, 0)
-      }
+    if (winner === 0) {
+      wins++
+      genWins++
+    } else if (winner === 1) {
+      losses++
+      genLosses++
+    } else {
+      draws++
+      genDraws++
     }
 
+    if (onUpdate && (genGamesDone % 6 === 0 || completed >= matchups.length)) {
+      onUpdate(getTrainingStats())
+    }
+  }
+
+  function requeueOrFinalizeAsDraw(m) {
+    if (m.retries < MAX_MATCH_RETRIES) {
+      m.retries++
+      matchups.push(m)
+      return
+    }
+    finalizeMatch(m, 0, 0, null)
+  }
+
+  function dispatch(worker) {
+    if (!running) return
+    if (nextMatch >= matchups.length) {
+      finishGenerationIfDone()
+      return
+    }
+
+    const m = matchups[nextMatch++]
+    worker.__activeMatch = m
+
+    const buf1 = population[m.a].slice()
+    const buf2 = population[m.b].slice()
     worker.postMessage(
       { weights1: buf1.buffer, weights2: buf2.buffer, roundId: m.id },
       [buf1.buffer, buf2.buffer]
     )
   }
+
+  for (let wi = 0; wi < workerPool.length; wi++) {
+    const worker = workerPool[wi]
+    worker.__activeMatch = null
+    worker.onmessage = function (evt) {
+      if (!running) return
+      const m = worker.__activeMatch
+      if (!m) return
+
+      const { roundId, fitness1, fitness2, winner, error } = evt.data
+      if (roundId !== m.id) {
+        requeueOrFinalizeAsDraw(m)
+      } else if (error) {
+        requeueOrFinalizeAsDraw(m)
+      } else {
+        finalizeMatch(m, fitness1, fitness2, winner)
+      }
+
+      worker.__activeMatch = null
+      dispatch(worker)
+      finishGenerationIfDone()
+    }
+
+    worker.onerror = function () {
+      if (!running) return
+      const m = worker.__activeMatch
+      if (!m) return
+
+      requeueOrFinalizeAsDraw(m)
+      worker.__activeMatch = null
+      dispatch(worker)
+      finishGenerationIfDone()
+      return true
+    }
+
+    dispatch(worker)
+  }
+}
+
+function buildMatchups() {
+  const matchups = []
+  let id = 0
+
+  while (matchups.length < GAMES_PER_GEN) {
+    const a = (Math.random() * POP_SIZE) | 0
+    let b = (Math.random() * POP_SIZE) | 0
+    while (b === a) b = (Math.random() * POP_SIZE) | 0
+
+    matchups.push({ a, b, id: id++, retries: 0 })
+    if (matchups.length < GAMES_PER_GEN) {
+      matchups.push({ a: b, b: a, id: id++, retries: 0 })
+    }
+  }
+
+  return matchups
 }
 
 // ── Evolution step ────────────────────────────────────────────────────────────
@@ -183,10 +271,12 @@ function evolve() {
   // Sort individuals by descending fitness
   const order = Array.from({ length: POP_SIZE }, function (_, i) { return i })
   order.sort(function (a, b) { return fitnessScores[b] - fitnessScores[a] })
-
+  console.log('Gen', generation, 'best fitness', fitnessScores[order[0]].toFixed(4), 'avg fitness', (fitnessScores.reduce((a, b) => a + b, 0) / POP_SIZE).toFixed(4))
   const bestIdx = order[0]
   bestFitness = fitnessScores[bestIdx]
   if (bestFitness > bestFitnessEver) {
+    stagnationGens = 0
+    currentMutRate = Math.max(MUT_MIN, currentMutRate * 0.9)
     bestFitnessEver = bestFitness
     lastSavedGen = generation
     // Save to localStorage via main-thread-only agent-store.js
@@ -198,6 +288,10 @@ function evolve() {
       setTFWeights(model, population[bestIdx])
       model.save('localstorage://slay-champion').catch(function () {})
     }
+  } else {
+    stagnationGens++
+    const bump = stagnationGens > 12 ? 1.1 : 1.03
+    currentMutRate = Math.min(MUT_MAX, currentMutRate * bump)
   }
 
   // Record fitness history (capped at 200 entries)
@@ -208,24 +302,46 @@ function evolve() {
 
   // Elitism: keep top ELITE_FRACTION unchanged
   const keepCount = Math.max(1, Math.floor(POP_SIZE * ELITE_FRACTION))
+  const immigrantCount = Math.max(1, Math.floor(POP_SIZE * IMMIGRANT_RATE))
   const newPop = []
 
   for (let i = 0; i < keepCount; i++) {
     newPop.push(population[order[i]].slice())
   }
 
-  // Fill remainder with mutated copies of elites
-  for (let i = keepCount; i < POP_SIZE; i++) {
-    const parentIdx = order[i % keepCount]
-    const parent    = population[parentIdx]
-    const child     = new Float32Array(TOTAL_WEIGHTS)
+  // Fill remainder with crossover + mutation from elite parents
+  const childTarget = POP_SIZE - immigrantCount
+  for (let i = keepCount; i < childTarget; i++) {
+    const parentA = population[selectEliteParent(order, keepCount)]
+    const parentB = population[selectEliteParent(order, keepCount)]
+    const child = new Float32Array(TOTAL_WEIGHTS)
+
     for (let j = 0; j < TOTAL_WEIGHTS; j++) {
-      child[j] = parent[j] + gaussianRand() * MUT_STRENGTH
+      const mix = Math.random()
+      const base = parentA[j] * mix + parentB[j] * (1 - mix)
+      child[j] = base + gaussianRand() * currentMutRate
+
+      if (Math.random() < 0.005) {
+        child[j] += gaussianRand() * currentMutRate * 3
+      }
     }
     newPop.push(child)
   }
 
+  for (let i = 0; i < immigrantCount; i++) {
+    newPop.push(createRandomWeights())
+  }
+
   population = newPop
+}
+
+function selectEliteParent(order, keepCount) {
+  let best = order[(Math.random() * keepCount) | 0]
+  for (let i = 0; i < 2; i++) {
+    const challenger = order[(Math.random() * keepCount) | 0]
+    if (fitnessScores[challenger] > fitnessScores[best]) best = challenger
+  }
+  return best
 }
 
 // Box-Muller transform for N(0,1) random numbers
@@ -262,9 +378,16 @@ function resetTraining() {
   bestFitness     = 0
   bestFitnessEver = 0
   lastSavedGen    = -1
+  stagnationGens  = 0
+  currentMutRate  = MUT_BASE
   wins            = 0
   losses          = 0
   draws           = 0
+  genWins         = 0
+  genLosses       = 0
+  genDraws        = 0
+  genGamesDone    = 0
+  genGamesPlanned = 0
   fitnessHistory  = []
   clearSavedAgent()
   if (globalThis.tf) globalThis.tf.io.removeModel('localstorage://slay-champion').catch(function () {})
@@ -285,10 +408,16 @@ function getTrainingStats() {
     wins:            wins,
     losses:          losses,
     draws:           draws,
+    genWins:         genWins,
+    genLosses:       genLosses,
+    genDraws:        genDraws,
+    genGamesDone:    genGamesDone,
+    genGamesPlanned: genGamesPlanned,
     winRate:         winRate,
     fitnessHistory:  fitnessHistory.slice(),
     numWorkers:      workerPool.length,
-    mutRate:         MUT_STRENGTH,
+    mutRate:         currentMutRate,
+    stagnationGens:  stagnationGens,
     hasSavedModel:   savedAgent !== null,
     savedModelGen:   savedAgent ? savedAgent.generation : null
   }
