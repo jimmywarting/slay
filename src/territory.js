@@ -86,6 +86,9 @@ function recomputeTerritories(state) {
 
     // If territory has ≥ 2 hexes but no hut, place one on the first eligible hex.
     // Never give huts to inactive players (index >= numActivePlayers).
+    // Priority 1: empty land (no unit, no structure).
+    // Priority 2: tree/palm hex (replace it with a hut, no unit present).
+    // Priority 3: hex occupied by a unit (displace the unit).
     if (!hutHexKey && component.length >= 2 && startHex.owner < numActivePlayers) {
       for (let pi = 0; pi < component.length; pi++) {
         const ph = hexes[component[pi]]
@@ -95,13 +98,27 @@ function recomputeTerritories(state) {
           break
         }
       }
-      // Fallback: any non-water hex with no unit
+      // Fallback 2: tree/palm hex with no unit — clear the tree and place a hut
       if (!hutHexKey) {
         for (let pi2 = 0; pi2 < component.length; pi2++) {
           const ph2 = hexes[component[pi2]]
-          if (ph2 && ph2.terrain !== TERRAIN_WATER && !ph2.unit) {
+          if (ph2 && (ph2.terrain === TERRAIN_TREE || ph2.terrain === TERRAIN_PALM) && !ph2.unit) {
+            ph2.terrain = TERRAIN_LAND
             ph2.structure = STRUCTURE_HUT
             hutHexKey = component[pi2]
+            break
+          }
+        }
+      }
+      // Fallback 3: displace a unit — the unit is lost and the hut takes its place.
+      // Units are owned by the territory; no external references need cleanup.
+      if (!hutHexKey) {
+        for (let pi3 = 0; pi3 < component.length; pi3++) {
+          const ph3 = hexes[component[pi3]]
+          if (ph3 && ph3.terrain !== TERRAIN_WATER) {
+            ph3.unit = null
+            ph3.structure = STRUCTURE_HUT
+            hutHexKey = component[pi3]
             break
           }
         }
