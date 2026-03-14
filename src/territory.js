@@ -109,20 +109,20 @@ function recomputeTerritories(state) {
     }
 
     // Single-hex territory: the hut has no purpose — destroy it and convert the
-    // hex to a tree or palm so the tile returns to neutral, impassable terrain.
+    // hex to a tree or palm. The hex stays owned by the same player; it is just
+    // no longer a viable territory (no hut). A tree/palm on owned land is normal.
     // Palm is used if the hex borders water; otherwise a regular tree.
     if (component.length === 1 && hutHexKey) {
       const orphan = hexes[hutHexKey]
       orphan.structure = null
       orphan.unit = null
-      orphan.owner = null
       const nearWater = hexNeighborKeys(orphan.q, orphan.r).some(function (nk) {
         const n = hexes[nk]
         return !n || n.terrain === TERRAIN_WATER
       })
       orphan.terrain = nearWater ? TERRAIN_PALM : TERRAIN_TREE
       orphan.treeAge = 0
-      // Hex is now neutral terrain — skip adding it to newTerritories.
+      // No territory record needed for a single tree/palm hex — skip push.
       continue
     }
 
