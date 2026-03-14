@@ -133,8 +133,12 @@ function getValidMoves(state, unitHexKey) {
             queue.push(nk)
           }
         } else if (nh.terrain === TERRAIN_TREE || nh.terrain === TERRAIN_PALM) {
-          // Tree/palm: can clear it (action), but cannot pass through
+          // Tree/palm: can clear it (action) and is passable for BFS transit
           validSet[nk] = true
+          if (!visited[nk]) {
+            visited[nk] = true
+            queue.push(nk)
+          }
         } else {
           // Empty own land hex — BFS continues from here.
           // Clearing a gravestone is an action; plain empty land is a free reposition.
