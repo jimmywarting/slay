@@ -1,24 +1,166 @@
-// Input handling: mouse clicks on the canvas
+// Input handling: mouse, wheel, and touch events on the canvas
 
 import { pixelToHex, hexKey } from './hex.js'
 import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_TOWER, STRUCTURE_GRAVESTONE } from './constants.js'
 import { getTerritoryForHex, recomputeTerritories } from './territory.js'
 import { TOWER_COST, PEASANT_COST, getBuyPlacementHexes, getValidMoves, executeMove } from './movement.js'
 import { mergedLevel, UNIT_DEFS } from './units.js'
-import { render, offsetX, offsetY } from './renderer.js'
+import { render, view } from './renderer.js'
 
 let updateUI = null
+
+// Minimum pixel movement before a press is treated as a drag rather than a tap
+const DRAG_THRESHOLD = 6
+// Minimum distance between two touch points to process a pinch gesture
+const MIN_PINCH_DISTANCE = 1
 
 function initInput(canvasEl, state, uiUpdater) {
   if (typeof uiUpdater !== 'function') throw new Error('initInput: uiUpdater must be a function')
   updateUI = uiUpdater
-  canvasEl.addEventListener('click', function (e) {
-    const rect = canvasEl.getBoundingClientRect()
-    const px = e.clientX - rect.left - offsetX
-    const py = e.clientY - rect.top - offsetY
-    const hc = pixelToHex(px, py)
+
+  // ── Shared helper: fire a game tap at canvas-local coordinates ──────────────
+  function fireTap(canvasX, canvasY) {
+    const worldX = (canvasX - view.panX) / view.zoom
+    const worldY = (canvasY - view.panY) / view.zoom
+    const hc = pixelToHex(worldX, worldY)
     handleHexClick(state, hexKey(hc.q, hc.r))
+  }
+
+  // ── Mouse: drag-to-pan + click-to-act ────────────────────────────────────
+  let mouseDown   = false
+  let mouseDragging = false
+  let mouseStartX = 0, mouseStartY = 0
+  let panStartX   = 0, panStartY   = 0
+
+  canvasEl.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return
+    mouseDown     = true
+    mouseDragging = false
+    mouseStartX   = e.clientX
+    mouseStartY   = e.clientY
+    panStartX     = view.panX
+    panStartY     = view.panY
   })
+
+  // Attach move/up to window so drags work even when the cursor leaves the canvas
+  window.addEventListener('mousemove', function (e) {
+    if (!mouseDown) return
+    const dx = e.clientX - mouseStartX
+    const dy = e.clientY - mouseStartY
+    if (!mouseDragging && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+      mouseDragging = true
+      canvasEl.style.cursor = 'grabbing'
+    }
+    if (mouseDragging) {
+      view.panX = panStartX + dx
+      view.panY = panStartY + dy
+      render(state)
+    }
+  })
+
+  window.addEventListener('mouseup', function (e) {
+    if (!mouseDown || e.button !== 0) return
+    mouseDown = false
+    canvasEl.style.cursor = 'default'
+    if (!mouseDragging) {
+      const rect = canvasEl.getBoundingClientRect()
+      fireTap(e.clientX - rect.left, e.clientY - rect.top)
+    }
+    mouseDragging = false
+  })
+
+  // ── Mouse wheel: zoom centred on the cursor ──────────────────────────────
+  canvasEl.addEventListener('wheel', function (e) {
+    e.preventDefault()
+    const factor   = e.deltaY < 0 ? 1.12 : 1 / 1.12
+    const newZoom  = Math.max(0.2, Math.min(6, view.zoom * factor))
+    const zf       = newZoom / view.zoom
+    const rect     = canvasEl.getBoundingClientRect()
+    const mx       = e.clientX - rect.left
+    const my       = e.clientY - rect.top
+    view.panX      = mx + (view.panX - mx) * zf
+    view.panY      = my + (view.panY - my) * zf
+    view.zoom      = newZoom
+    render(state)
+  }, { passive: false })
+
+  // ── Touch: one-finger pan + two-finger pinch-zoom + tap ─────────────────
+  let lastTouches  = []
+  let touchStartX  = 0
+  let touchStartY  = 0
+  let touchMoved   = false
+
+  canvasEl.addEventListener('touchstart', function (e) {
+    e.preventDefault()
+    lastTouches  = Array.from(e.touches)
+    touchMoved   = false
+    if (e.touches.length === 1) {
+      touchStartX = e.touches[0].clientX
+      touchStartY = e.touches[0].clientY
+    }
+  }, { passive: false })
+
+  canvasEl.addEventListener('touchmove', function (e) {
+    e.preventDefault()
+    const touches = Array.from(e.touches)
+
+    if (touches.length === 1 && lastTouches.length === 1) {
+      // ── Single-finger pan ────────────────────────────────────────────────
+      const dx = touches[0].clientX - lastTouches[0].clientX
+      const dy = touches[0].clientY - lastTouches[0].clientY
+      if (Math.hypot(touches[0].clientX - touchStartX,
+                     touches[0].clientY - touchStartY) > DRAG_THRESHOLD) {
+        touchMoved = true
+      }
+      view.panX += dx
+      view.panY += dy
+      render(state)
+
+    } else if (touches.length === 2 && lastTouches.length >= 2) {
+      // ── Two-finger pinch-zoom (+ implicit pan from midpoint shift) ────────
+      touchMoved = true
+      const rect     = canvasEl.getBoundingClientRect()
+      const prevDist = Math.hypot(lastTouches[0].clientX - lastTouches[1].clientX,
+                                  lastTouches[0].clientY - lastTouches[1].clientY)
+      const curDist  = Math.hypot(touches[0].clientX - touches[1].clientX,
+                                  touches[0].clientY - touches[1].clientY)
+      if (prevDist < MIN_PINCH_DISTANCE) { lastTouches = touches; return }
+
+      const factor  = curDist / prevDist
+      const newZoom = Math.max(0.2, Math.min(6, view.zoom * factor))
+      const zf      = newZoom / view.zoom
+
+      // Midpoints in canvas space (current and previous)
+      const mx     = (touches[0].clientX + touches[1].clientX) / 2 - rect.left
+      const my     = (touches[0].clientY + touches[1].clientY) / 2 - rect.top
+      const prevMx = (lastTouches[0].clientX + lastTouches[1].clientX) / 2 - rect.left
+      const prevMy = (lastTouches[0].clientY + lastTouches[1].clientY) / 2 - rect.top
+
+      // Zoom around old midpoint, then shift by midpoint delta
+      view.panX = mx - (prevMx - view.panX) * zf
+      view.panY = my - (prevMy - view.panY) * zf
+      view.zoom = newZoom
+      render(state)
+    }
+
+    lastTouches = touches
+  }, { passive: false })
+
+  canvasEl.addEventListener('touchend', function (e) {
+    e.preventDefault()
+    if (!touchMoved && lastTouches.length === 1) {
+      const touch = lastTouches[0]
+      const rect  = canvasEl.getBoundingClientRect()
+      fireTap(touch.clientX - rect.left, touch.clientY - rect.top)
+    }
+    lastTouches = Array.from(e.touches)
+    if (lastTouches.length === 0) touchMoved = false
+  }, { passive: false })
+
+  canvasEl.addEventListener('touchcancel', function () {
+    lastTouches = []
+    touchMoved  = false
+  }, { passive: false })
 }
 
 function handleHexClick(state, key) {

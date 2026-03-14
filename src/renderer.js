@@ -11,8 +11,10 @@ const WATER_COLOR      = '#2471a3'
 const WATER_DEEP_COLOR = '#1a5276'
 
 let canvas, ctx
-let offsetX = 0
-let offsetY = 0
+
+// Shared pan/zoom state — mutated by both renderer and input.js
+const view = { panX: 0, panY: 0, zoom: 1 }
+let viewInitialized = false
 
 function initRenderer(canvasEl) {
   canvas = canvasEl
@@ -22,21 +24,44 @@ function initRenderer(canvasEl) {
 
 function resizeCanvas() {
   const sidebar = document.getElementById('sidebar')
-  const sidebarWidth = sidebar ? sidebar.offsetWidth : 280
-  canvas.width = window.innerWidth - sidebarWidth
-  canvas.height = window.innerHeight
-  offsetX = canvas.width / 2
-  offsetY = canvas.height / 2
+  const oldW = canvas.width
+  const oldH = canvas.height
+
+  if (!sidebar) {
+    canvas.width  = window.innerWidth
+    canvas.height = window.innerHeight
+  } else if (window.innerWidth <= 768) {
+    // Mobile: sidebar lives below the canvas
+    canvas.width  = window.innerWidth
+    canvas.height = Math.max(100, window.innerHeight - sidebar.offsetHeight)
+  } else {
+    // Desktop: sidebar is on the right
+    canvas.width  = window.innerWidth  - sidebar.offsetWidth
+    canvas.height = window.innerHeight
+  }
+
+  if (!viewInitialized) {
+    view.panX = canvas.width  / 2
+    view.panY = canvas.height / 2
+    viewInitialized = true
+  } else {
+    // Keep the same world centre visible after a resize
+    view.panX += (canvas.width  - oldW) / 2
+    view.panY += (canvas.height - oldH) / 2
+  }
 }
 
 // Main render entry point
 function render(state) {
   if (!ctx) return
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-  // Background
+  // ── Background (screen space — no world transform) ────────────────────────
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.fillStyle = '#0f2030'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  // ── Apply pan/zoom transform for all world drawing ────────────────────────
+  ctx.setTransform(view.zoom, 0, 0, view.zoom, view.panX, view.panY)
 
   // Draw all hexes
   const keys = Object.keys(state.hexes)
@@ -113,12 +138,15 @@ function render(state) {
       drawTerritoryBorder(state.hexes, activeTerr, 'rgba(255,255,255,0.85)', 3)
     }
   }
+
+  // Reset to identity so subsequent non-world draws (if any) are unaffected
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
 }
 
 function drawWaterHex(hex) {
   const pos = hexToPixel(hex.q, hex.r)
-  const cx = pos.x + offsetX
-  const cy = pos.y + offsetY
+  const cx = pos.x
+  const cy = pos.y
   const corners = hexCorners(cx, cy)
 
   ctx.beginPath()
@@ -134,8 +162,8 @@ function drawWaterHex(hex) {
 
 function drawHexBase(state, hex, hexKey) {
   const pos = hexToPixel(hex.q, hex.r)
-  const cx = pos.x + offsetX
-  const cy = pos.y + offsetY
+  const cx = pos.x
+  const cy = pos.y
   const corners = hexCorners(cx, cy)
 
   // Fill color — every non-water hex is always owned by a player
@@ -187,8 +215,8 @@ function drawHexContent(state, hex, hexKey, cx, cy) {
 
 function drawOverlay(hex, color, strokeWidth) {
   const pos = hexToPixel(hex.q, hex.r)
-  const cx = pos.x + offsetX
-  const cy = pos.y + offsetY
+  const cx = pos.x
+  const cy = pos.y
   const corners = hexCorners(cx, cy)
 
   ctx.beginPath()
@@ -264,8 +292,8 @@ function drawTerritoryBorder(hexes, territory, color, lineWidth) {
     if (!hex) continue
 
     const pos = hexToPixel(hex.q, hex.r)
-    const cx = pos.x + offsetX
-    const cy = pos.y + offsetY
+    const cx = pos.x
+    const cy = pos.y
     const corners = hexCorners(cx, cy)
     const nbrs = hexNeighborKeys(hex.q, hex.r)
 
@@ -283,5 +311,5 @@ function drawTerritoryBorder(hexes, territory, color, lineWidth) {
   }
 }
 
-export { PLAYER_COLORS, PLAYER_HEX_COLORS, offsetX, offsetY, initRenderer, resizeCanvas, render }
+export { PLAYER_COLORS, PLAYER_HEX_COLORS, view, initRenderer, resizeCanvas, render }
 
