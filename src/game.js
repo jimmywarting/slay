@@ -12,16 +12,33 @@ import { STRUCTURE_HUT } from './constants.js'
 import { isAIPlayer, runAITurn, appendToLog } from './ai.js'
 import { getActiveNeuralAgent } from './agent-store.js'
 import { startTraining, stopTraining, resetTraining, isTrainingActive, getTrainingStats } from './train.js'
+import {
+  initP2P, destroyP2P, broadcastAction, broadcastStateSync,
+  p2pBus, roomUrl,
+  MSG_HEX_CLICK, MSG_END_TURN, MSG_BUY_UNIT, MSG_BUILD_TOWER, MSG_UNDO_TURN
+} from './p2p.js'
 
 const NUM_TOTAL_PLAYERS = 6 // colour zones always on the map
 const PLAYER_NAMES = ['Olive', 'Forest', 'Gold', 'Fern', 'Sage', 'Lime']
 
+// Player roles: 'human' = local player, 'ai' = AI bot, 'none' = unused slot
+const DEFAULT_ROLES = ['human', 'ai', 'ai', 'ai', 'ai', 'ai']
+
 // Current game configuration (updated by the start screen)
-let gameConfig = { mapSize: 'small', numActivePlayers: 6 }
+// playerRoles[i]: 'human' | 'ai' | 'none'
+let gameConfig = {
+  mapSize: 'small',
+  playerRoles: DEFAULT_ROLES.slice()
+}
 
 let gameState = null
 let watchMode = false       // true while watch loop is running
 let watchLoopActive = false // guards against multiple concurrent loops
+
+// P2P state
+let p2pActive       = false   // true while a P2P session is running
+let p2pLocalIndex   = -1      // which player index we control in P2P mode
+let _p2pRemoteActionResolver = null  // resolve() for waiting on remote moves
 
 // Water density constants — controls how many random interior water hexes are placed
 const MIN_WATER_DENSITY  = 0.10  // floor for low player counts
@@ -44,8 +61,9 @@ function showStartScreen() {
   const screen = document.getElementById('startScreen')
   if (!screen) return
 
-  // Populate the player preview list based on current selections
+  // Populate the player list and room link based on current selections
   refreshPlayerPreview()
+  refreshRoomLink()
   screen.style.display = 'flex'
 }
 
@@ -54,24 +72,88 @@ function hideStartScreen() {
   if (screen) screen.style.display = 'none'
 }
 
-// Re-render the coloured player list in the start screen
+// Re-render the per-player role rows in the start screen
 function refreshPlayerPreview() {
   const listEl = document.getElementById('startPlayerList')
   if (!listEl) return
 
-  const n = gameConfig.numActivePlayers
+  const roles = gameConfig.playerRoles
   let html = ''
-  for (let i = 0; i < n; i++) {
+
+  for (let i = 0; i < NUM_TOTAL_PLAYERS; i++) {
+    const role  = roles[i] || 'none'
     const color = PLAYER_HEX_COLORS[i % PLAYER_HEX_COLORS.length]
-    const isHuman = i === 0
-    const icon  = isHuman ? '🧑' : '🤖'
-    const label = isHuman ? 'You' : 'AI'
-    html += '<div class="player-preview-item">' +
-      '<span class="player-preview-dot" style="background:' + color + '"></span>' +
-      icon + ' <strong style="color:' + color + '">' + PLAYER_NAMES[i] + '</strong>' +
-      ' <span class="player-preview-role">(' + label + ')</span></div>'
+    const name  = PLAYER_NAMES[i]
+
+    const humanClass = role === 'human' ? ' active-human' : ''
+    const aiClass    = role === 'ai'    ? ' active-ai'    : ''
+    const noneClass  = role === 'none'  ? ' active-none'  : ''
+
+    html += `<div class="player-row">` +
+      `<span class="player-row-dot" style="background:${color}"></span>` +
+      `<span class="player-row-name" style="color:${color}">${name}</span>` +
+      `<div class="role-toggle">` +
+        `<button class="role-btn${humanClass}" data-player="${i}" data-role="human">👤 Human</button>` +
+        `<button class="role-btn${aiClass}"    data-player="${i}" data-role="ai"   >🤖 AI</button>` +
+        `<button class="role-btn${noneClass}"  data-player="${i}" data-role="none" >✕ None</button>` +
+      `</div></div>`
   }
+
   listEl.innerHTML = html
+
+  // Wire role-button click events
+  listEl.querySelectorAll('.role-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const pi   = parseInt(btn.dataset.player, 10)
+      const role = btn.dataset.role
+
+      // Player 0 cannot be set to 'none'
+      if (pi === 0 && role === 'none') return
+
+      gameConfig.playerRoles[pi] = role
+      refreshPlayerPreview()
+      refreshRoomLink()
+    })
+  })
+}
+
+// Update the room-link panel visibility and URL field
+function refreshRoomLink() {
+  const panel = document.getElementById('roomLinkPanel')
+  if (!panel) return
+
+  // Show the room link if at least one 'human' slot exists (P2P potentially needed)
+  const hasHuman = gameConfig.playerRoles.some(function (r) { return r === 'human' })
+  panel.style.display = hasHuman ? '' : 'none'
+
+  const input = document.getElementById('roomLinkInput')
+  if (input) {
+    // Generate / preserve room URL (use current hash if present, otherwise eagerly generate one)
+    let url = roomUrl()
+    if (!url) {
+      // Pre-generate the room hash so the user can share it before starting
+      const hash = window.location.hash.replace(/^#/, '')
+      if (/^slay-[0-9a-f]{40}$/i.test(hash)) {
+        url = window.location.origin + window.location.pathname + '#' + hash
+      } else {
+        // Generate a new room ID now and put it in the URL bar (no reload)
+        const arr = new Uint8Array(20)
+        crypto.getRandomValues(arr)
+        const id = Array.from(arr).map(function (b) { return b.toString(16).padStart(2, '0') }).join('')
+        window.history.replaceState(null, '', window.location.pathname + '#slay-' + id)
+        url = window.location.origin + window.location.pathname + '#slay-' + id
+      }
+    }
+    input.value = url
+  }
+
+  const statusEl = document.getElementById('p2pStatus')
+  if (statusEl) {
+    statusEl.textContent = p2pActive
+      ? '✅ Room active – share the link above'
+      : 'Not connected – start the game to open the room.'
+    statusEl.className = p2pActive ? 'connected' : ''
+  }
 }
 
 // ── Initialisation ────────────────────────────────────────────────────────────
@@ -80,26 +162,36 @@ function initGame() {
   const canvasEl = document.getElementById('gameCanvas')
   initRenderer(canvasEl)
 
-  // Pass a getter so input always uses the live gameState reference
-  initInput(canvasEl, function () { return gameState }, updateUI)
+  // Pass a getter so input always uses the live gameState reference.
+  // Also pass an isLocalTurn predicate so input is blocked during remote turns.
+  initInput(canvasEl, function () { return gameState }, updateUI, function (state) {
+    if (!state) return false
+    if (!p2pActive) return true                      // no P2P — always local
+    return state.activePlayer === p2pLocalIndex      // only our own turn
+  })
 
   // Button handlers — guard against null gameState (before first game starts)
   document.getElementById('btnEndTurn').addEventListener('click', async function () {
     if (!gameState || gameState.gameOver) return
+    if (p2pActive && gameState.activePlayer !== p2pLocalIndex) return  // not our turn
     appendToLog(gameState, 'Turn ' + (gameState.turn + 1) + ': ' +
       gameState.players[gameState.activePlayer].name + ' ended their turn')
     endTurn(gameState)
     checkWinCondition(gameState)
     render(gameState)
     updateUI(gameState)
+    // Broadcast the end-turn event so peers advance their game state
+    if (p2pActive) broadcastAction({ type: MSG_END_TURN, from: p2pLocalIndex })
     await runPendingAITurns()
   })
 
   document.getElementById('btnUndo').addEventListener('click', function () {
     if (!gameState || gameState.gameOver) return
+    if (p2pActive && gameState.activePlayer !== p2pLocalIndex) return
     undoTurn(gameState)
     render(gameState)
     updateUI(gameState)
+    if (p2pActive) broadcastAction({ type: MSG_UNDO_TURN, from: p2pLocalIndex })
   })
 
   const BUY_BUTTON_IDS = ['btnBuyPeasant', 'btnBuySpearman', 'btnBuyKnight', 'btnBuyBaron']
@@ -109,6 +201,8 @@ function initGame() {
       if (btn) {
         btn.addEventListener('click', function () {
           if (!gameState || gameState.gameOver) return
+          if (p2pActive && gameState.activePlayer !== p2pLocalIndex) return
+          if (p2pActive) broadcastAction({ type: MSG_BUY_UNIT, level: level, from: p2pLocalIndex })
           handleBuyUnit(gameState, level)
         })
       }
@@ -117,6 +211,8 @@ function initGame() {
 
   document.getElementById('btnBuildTower').addEventListener('click', function () {
     if (!gameState || gameState.gameOver) return
+    if (p2pActive && gameState.activePlayer !== p2pLocalIndex) return
+    if (p2pActive) broadcastAction({ type: MSG_BUILD_TOWER, from: p2pLocalIndex })
     handleBuildTower(gameState)
   })
 
@@ -179,9 +275,9 @@ function initGame() {
   }
 
   // ── Start screen button wiring ─────────────────────────────────────────────
-  const sizeButtons   = document.querySelectorAll('.start-size-btn')
-  const playerButtons = document.querySelectorAll('.start-players-btn')
-  const btnStartGame  = document.getElementById('btnStartGame')
+  const sizeButtons  = document.querySelectorAll('.start-size-btn')
+  const btnStartGame = document.getElementById('btnStartGame')
+  const btnCopyLink  = document.getElementById('btnCopyLink')
 
   sizeButtons.forEach(function (btn) {
     btn.addEventListener('click', function () {
@@ -189,17 +285,26 @@ function initGame() {
       btn.classList.add('active')
       gameConfig.mapSize = btn.dataset.size
       refreshPlayerPreview()
+      refreshRoomLink()
     })
   })
 
-  playerButtons.forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      playerButtons.forEach(function (b) { b.classList.remove('active') })
-      btn.classList.add('active')
-      gameConfig.numActivePlayers = parseInt(btn.dataset.players, 10)
-      refreshPlayerPreview()
+  if (btnCopyLink) {
+    btnCopyLink.addEventListener('click', function () {
+      const url = document.getElementById('roomLinkInput')
+      if (url && navigator.clipboard) {
+        navigator.clipboard.writeText(url.value).then(function () {
+          btnCopyLink.textContent = 'Copied!'
+          setTimeout(function () { btnCopyLink.textContent = 'Copy' }, 1500)
+        })
+      } else if (url) {
+        url.select()
+        document.execCommand('copy')
+        btnCopyLink.textContent = 'Copied!'
+        setTimeout(function () { btnCopyLink.textContent = 'Copy' }, 1500)
+      }
     })
-  })
+  }
 
   if (btnStartGame) {
     btnStartGame.addEventListener('click', function () {
@@ -213,17 +318,45 @@ function initGame() {
 }
 
 function startNewGame() {
-  const numActive = gameConfig.numActivePlayers
+  const roles     = gameConfig.playerRoles
+  // Count active players (not 'none')
+  const numActive = roles.filter(function (r) { return r !== 'none' }).length
   const radius    = MAP_SIZES[gameConfig.mapSize] || MAP_SIZES.small
 
-  gameState = createGameState(numActive, radius, calcWaterDensity(numActive))
+  // Set up P2P if any slot is 'human' (there will be at least one – player 0)
+  const humanSlots = roles.map(function (r, i) { return r === 'human' ? i : -1 }).filter(function (i) { return i >= 0 })
+  const needsP2P   = humanSlots.length > 0 // always true since at least one human
+
+  if (p2pActive) destroyP2P()
+
+  // Only enable P2P when there are multiple human slots (real multiplayer needed)
+  // Single human + AI = local solo play (no tracker connection required)
+  if (needsP2P && humanSlots.length > 1) {
+    p2pLocalIndex = humanSlots[0]  // local player is the first human slot (usually 0)
+    p2pActive = true
+    initP2P({ localPlayerIndex: p2pLocalIndex, createRoom: false })
+    refreshRoomLink()
+  } else {
+    p2pActive = false
+    p2pLocalIndex = humanSlots[0] >= 0 ? humanSlots[0] : 0
+  }
+
+  gameState = createGameState(roles, radius, calcWaterDensity(numActive))
   render(gameState)
   updateUI(gameState)
+
+  // Sync state to peers after a short delay (let tracker connect)
+  if (p2pActive) {
+    setTimeout(function () {
+      broadcastStateSync(gameState)
+    }, 2000)
+  }
+
   runPendingAITurns()
 }
 
-function createGameState(numActivePlayers, radius, waterDensity) {
-  // Always create all 6 colour slots; only the first numActivePlayers are active
+function createGameState(playerRoles, radius, waterDensity) {
+  const roles   = Array.isArray(playerRoles) ? playerRoles : DEFAULT_ROLES.slice()
   const players = []
   for (let i = 0; i < NUM_TOTAL_PLAYERS; i++) {
     players.push({
@@ -233,16 +366,22 @@ function createGameState(numActivePlayers, radius, waterDensity) {
     })
   }
 
-  const hexes = generateHexMap(radius, waterDensity)
-  const territories = placeStartingTerritories(hexes, numActivePlayers)
+  // Only active (non-'none') players get territory
+  const numActive = roles.filter(function (r) { return r !== 'none' }).length
 
-  // AI controls every player except the human (player 0)
+  const hexes = generateHexMap(radius, waterDensity)
+  const territories = placeStartingTerritories(hexes, numActive)
+
+  // Build AI player list: slots that are 'ai' (not 'human' and not 'none')
   const aiPlayers = []
-  for (let i = 1; i < numActivePlayers; i++) aiPlayers.push(i)
+  for (let i = 0; i < NUM_TOTAL_PLAYERS; i++) {
+    if (roles[i] === 'ai') aiPlayers.push(i)
+  }
 
   const state = {
     players: players,
-    numActivePlayers: numActivePlayers,
+    numActivePlayers: numActive,
+    playerRoles: roles,
     hexes: hexes,
     territories: territories,
     turn: 0,
@@ -502,16 +641,15 @@ async function startWatchMode() {
   watchMode = true
   watchLoopActive = true
 
-  const numActive    = gameConfig.numActivePlayers
+  const roles     = gameConfig.playerRoles.slice()
+  const numActive = roles.filter(function (r) { return r !== 'none' }).length
   const radius       = MAP_SIZES[gameConfig.mapSize] || MAP_SIZES.small
   const waterDensity = calcWaterDensity(numActive)
 
-  // All active player slots become AI-controlled.
-  const aiPlayerIndices = []
-  for (let i = 0; i < numActive; i++) aiPlayerIndices.push(i)
+  // Override all roles to AI for watch mode
+  const allAiRoles = roles.map(function (r) { return r === 'none' ? 'none' : 'ai' })
 
-  gameState = createGameState(numActive, radius, waterDensity)
-  gameState.aiPlayers = aiPlayerIndices
+  gameState = createGameState(allAiRoles, radius, waterDensity)
   render(gameState)
   updateUI(gameState)
 
@@ -525,8 +663,7 @@ async function startWatchMode() {
     await new Promise(function (resolve) { setTimeout(resolve, 2500) })
     if (!watchMode) break
 
-    gameState = createGameState(numActive, radius, waterDensity)
-    gameState.aiPlayers = aiPlayerIndices
+    gameState = createGameState(allAiRoles, radius, waterDensity)
     render(gameState)
     updateUI(gameState)
   }
@@ -541,36 +678,63 @@ function stopWatchMode() {
   watchMode = false
 }
 
+// Is the active player a remote human (controlled by a P2P peer)?
+function isRemotePlayer(state) {
+  if (!p2pActive || !state) return false
+  const role = (state.playerRoles || gameConfig.playerRoles)[state.activePlayer]
+  return role === 'human' && state.activePlayer !== p2pLocalIndex
+}
+
 // Run AI turns for as long as the active player is AI-controlled.
+// If the active player is a remote human in P2P mode, wait for their move.
 // Shows "thinking..." in the UI while waiting for the LLM response.
 async function runPendingAITurns() {
-  while (gameState && !gameState.gameOver && isAIPlayer(gameState, gameState.activePlayer)) {
-    gameState.aiThinking = true
-    render(gameState)
-    updateUI(gameState)
+  while (gameState && !gameState.gameOver) {
+    const ap = gameState.activePlayer
+    if (isAIPlayer(gameState, ap)) {
+      // ── AI turn ──────────────────────────────────────────────────────────
+      gameState.aiThinking = true
+      render(gameState)
+      updateUI(gameState)
 
-    // Abort immediately if gameState was replaced before we even sleep.
-    if (!gameState || !isAIPlayer(gameState, gameState.activePlayer)) break
+      if (!gameState || !isAIPlayer(gameState, gameState.activePlayer)) break
+      await new Promise(function (resolve) { setTimeout(resolve, 500) })
+      if (!gameState || !isAIPlayer(gameState, gameState.activePlayer)) break
 
-    // Small pause so the player can see the transition before the AI acts
-    await new Promise(function (resolve) { setTimeout(resolve, 500) })
+      await runAITurn(gameState)
 
-    // Abort if gameState was replaced (e.g. stop-watch / new-game clicked) during the sleep.
-    if (!gameState || !isAIPlayer(gameState, gameState.activePlayer)) break
+      gameState.aiThinking = false
+      appendToLog(gameState, 'Turn ' + (gameState.turn + 1) + ': ' +
+        gameState.players[gameState.activePlayer].name + ' (AI) ended their turn')
+      endTurn(gameState)
+      checkWinCondition(gameState)
+      render(gameState)
+      updateUI(gameState)
 
-    await runAITurn(gameState)
+      // Broadcast AI move result to peers
+      if (p2pActive) broadcastAction({ type: MSG_END_TURN, from: ap })
 
-    gameState.aiThinking = false
-    appendToLog(gameState, 'Turn ' + (gameState.turn + 1) + ': ' +
-      gameState.players[gameState.activePlayer].name + ' (AI) ended their turn')
-    endTurn(gameState)
-    checkWinCondition(gameState)
-    render(gameState)
-    updateUI(gameState)
-
-    // Brief pause after AI moves so the human can review
-    await new Promise(function (resolve) { setTimeout(resolve, 300) })
+      await new Promise(function (resolve) { setTimeout(resolve, 300) })
+    } else if (isRemotePlayer(gameState)) {
+      // ── Remote human turn: wait for P2P action ───────────────────────────
+      setMessage(gameState, '⌛ Waiting for ' + gameState.players[ap].name + '…')
+      render(gameState)
+      updateUI(gameState)
+      await waitForRemoteAction()
+      // After the remote action is applied, the loop continues
+    } else {
+      // Local human turn — return control to the event loop
+      break
+    }
   }
+}
+
+// Returns a Promise that resolves when the remote player ends their turn.
+// Remote actions are applied inline via the p2pBus 'remote_action' listener.
+function waitForRemoteAction() {
+  return new Promise(function (resolve) {
+    _p2pRemoteActionResolver = resolve
+  })
 }
 
 // A player wins when all opponents own no huts (they have been eliminated).
@@ -701,6 +865,101 @@ function updateTrainingUI(stats) {
     chartEl.textContent = ''
   }
 }
+
+
+// ── P2P event listeners ───────────────────────────────────────────────────────
+// Wired up once at module load; they remain active for the lifetime of the page.
+
+p2pBus.addEventListener('remote_action', function (ev) {
+  const msg = ev.detail
+  if (!gameState || gameState.gameOver) return
+  if (!isRemotePlayer(gameState)) return   // ignore stale events
+
+  switch (msg.type) {
+    case MSG_HEX_CLICK: {
+      // Simulate a hex click from the remote player
+      const hex = gameState.hexes[msg.hexKey]
+      if (hex) {
+        // Import the click handler from input.js at runtime to avoid circular deps
+        // Instead, directly dispatch a custom DOM event that input.js already listens to
+        const canvas = document.getElementById('gameCanvas')
+        if (canvas) {
+          canvas.dispatchEvent(new CustomEvent('p2p_hex_click', { detail: { hexKey: msg.hexKey } }))
+        }
+      }
+      break
+    }
+    case MSG_END_TURN: {
+      appendToLog(gameState, 'Turn ' + (gameState.turn + 1) + ': ' +
+        gameState.players[gameState.activePlayer].name + ' ended their turn')
+      endTurn(gameState)
+      checkWinCondition(gameState)
+      render(gameState)
+      updateUI(gameState)
+      // Resolve the waitForRemoteAction() promise so the game loop continues
+      if (_p2pRemoteActionResolver) {
+        const res = _p2pRemoteActionResolver
+        _p2pRemoteActionResolver = null
+        res()
+      }
+      break
+    }
+    case MSG_BUY_UNIT: {
+      if (msg.level) handleBuyUnit(gameState, msg.level)
+      break
+    }
+    case MSG_BUILD_TOWER: {
+      handleBuildTower(gameState)
+      break
+    }
+    case MSG_UNDO_TURN: {
+      undoTurn(gameState)
+      render(gameState)
+      updateUI(gameState)
+      break
+    }
+  }
+})
+
+p2pBus.addEventListener('state_sync', function (ev) {
+  // Host sent us the full game state (we're a joining client)
+  if (p2pLocalIndex === 0) return // host doesn't accept state syncs
+  const incoming = ev.detail.state
+  if (!incoming || !incoming.hexes) return
+  gameState = incoming
+  // Restore player roles config from the received state
+  if (gameState.playerRoles) gameConfig.playerRoles = gameState.playerRoles.slice()
+  render(gameState)
+  updateUI(gameState)
+  runPendingAITurns()
+})
+
+p2pBus.addEventListener('peer_connected', function (ev) {
+  const idx = ev.detail.playerIndex
+  setMessage(gameState, '🌐 ' + (gameState ? gameState.players[idx].name : 'Player ' + idx) + ' connected!')
+  if (gameState) {
+    render(gameState)
+    updateUI(gameState)
+    // Host re-sends state to the new peer
+    if (p2pLocalIndex === 0) {
+      setTimeout(function () { broadcastStateSync(gameState) }, 500)
+    }
+  }
+  refreshRoomLink()
+})
+
+p2pBus.addEventListener('peer_disconnected', function (ev) {
+  setMessage(gameState, '⚠ A player disconnected.')
+  if (gameState) {
+    render(gameState)
+    updateUI(gameState)
+  }
+  refreshRoomLink()
+})
+
+p2pBus.addEventListener('room_ready', function () {
+  refreshRoomLink()
+})
 
 
 export { updateUI }

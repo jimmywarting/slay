@@ -382,32 +382,135 @@
       margin-top: 6px;
     }
 
+    /* Player role rows in the start screen */
     #startPlayerList {
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: 6px;
       margin-top: 2px;
     }
 
-    .player-preview-item {
+    .player-row {
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 0.85rem;
-      color: #ecf0f1;
     }
 
-    .player-preview-dot {
+    .player-row-dot {
       width: 12px;
       height: 12px;
       border-radius: 50%;
       flex-shrink: 0;
     }
 
-    .player-preview-role {
-      color: #7f8c8d;
-      font-size: 0.78rem;
+    .player-row-name {
+      flex: 1;
+      font-size: 0.85rem;
+      font-weight: 600;
     }
+
+    .role-toggle {
+      display: flex;
+      border: 1px solid #2c3e50;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .role-btn {
+      padding: 4px 9px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      background: #0f2030;
+      color: #7f8c8d;
+      border: none;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .role-btn:not(:last-child) {
+      border-right: 1px solid #2c3e50;
+    }
+
+    .role-btn.active-human {
+      background: #27381a;
+      color: #7ec850;
+    }
+
+    .role-btn.active-ai {
+      background: #1a2540;
+      color: #5b9bd5;
+    }
+
+    .role-btn.active-none {
+      background: #251515;
+      color: #c0392b;
+    }
+
+    /* Room link panel */
+    #roomLinkPanel {
+      margin-top: 14px;
+      background: #111e2d;
+      border: 1px solid #2c3e50;
+      border-radius: 8px;
+      padding: 12px 14px;
+      text-align: left;
+    }
+
+    #roomLinkPanel .room-label {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #7f8c8d;
+      margin-bottom: 6px;
+    }
+
+    .room-url-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    #roomLinkInput {
+      flex: 1;
+      background: #0f2030;
+      border: 1px solid #2c3e50;
+      border-radius: 5px;
+      color: #bdc3c7;
+      font-size: 0.72rem;
+      padding: 5px 8px;
+      font-family: monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #btnCopyLink {
+      background: #2c3e50;
+      border: none;
+      border-radius: 5px;
+      color: #ecf0f1;
+      padding: 5px 10px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+
+    #btnCopyLink:hover { background: #3d5166; }
+
+    .room-hint {
+      font-size: 0.65rem;
+      color: #566573;
+      margin-top: 5px;
+    }
+
+    #p2pStatus {
+      font-size: 0.7rem;
+      color: #7f8c8d;
+      margin-top: 4px;
+    }
+
+    #p2pStatus.connected { color: #7ec850; }
 
     #btnStartGame {
       width: 100%;
@@ -448,19 +551,19 @@
     </div>
 
     <div class="start-section">
-      <h3>Number of Players (1 human + AI opponents)</h3>
-      <div class="start-btn-row">
-        <button class="start-players-btn" data-players="2">2</button>
-        <button class="start-players-btn" data-players="3">3</button>
-        <button class="start-players-btn" data-players="4">4</button>
-        <button class="start-players-btn" data-players="5">5</button>
-        <button class="start-players-btn active" data-players="6">6</button>
-      </div>
-    </div>
-
-    <div class="start-section">
-      <h3>Players</h3>
+      <h3>Players — choose Human / AI / None per slot</h3>
       <div id="startPlayerList"></div>
+
+      <!-- Multiplayer room link (shown when ≥1 human slot is set) -->
+      <div id="roomLinkPanel">
+        <div class="room-label">🌐 Online room link</div>
+        <div class="room-url-row">
+          <input id="roomLinkInput" type="text" readonly>
+          <button id="btnCopyLink">Copy</button>
+        </div>
+        <div class="room-hint">Share this link so others can join. They enter the same URL (or paste the hash).</div>
+        <div id="p2pStatus">Not connected — start the game to open the room.</div>
+      </div>
     </div>
 
     <button id="btnStartGame">⚔️ Start Game</button>

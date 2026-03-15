@@ -6,8 +6,12 @@ import { getTerritoryForHex, recomputeTerritories } from './territory.js'
 import { TOWER_COST, PEASANT_COST, getBuyPlacementHexes, getValidMoves, executeMove } from './movement.js'
 import { mergedLevel, UNIT_DEFS } from './units.js'
 import { render, view } from './renderer.js'
+import { broadcastAction, MSG_HEX_CLICK } from './p2p.js'
 
 let updateUI = null
+// Optional predicate: returns true when the local player controls the current turn.
+// Set from game.js to block input during remote players' turns.
+let _isLocalTurn = function () { return true }
 
 // Minimum pixel movement before a press is treated as a drag rather than a tap
 const DRAG_THRESHOLD = 6
@@ -16,18 +20,30 @@ const MIN_PINCH_DISTANCE = 1
 
 // Accept a getter function (() => currentGameState) so that input events
 // always act on the live state even after a New Game replaces the object.
-function initInput(canvasEl, getState, uiUpdater) {
+function initInput(canvasEl, getState, uiUpdater, isLocalTurnFn) {
   if (typeof uiUpdater !== 'function') throw new Error('initInput: uiUpdater must be a function')
   updateUI = uiUpdater
+  if (typeof isLocalTurnFn === 'function') _isLocalTurn = isLocalTurnFn
+
+  // ── P2P: handle remote hex-click events dispatched by game.js ─────────────
+  canvasEl.addEventListener('p2p_hex_click', function (e) {
+    const state = getState()
+    if (!state) return
+    handleHexClick(state, e.detail.hexKey)
+  })
 
   // ── Shared helper: fire a game tap at canvas-local coordinates ──────────────
   function fireTap(canvasX, canvasY) {
     const state = getState()
     if (!state) return
+    if (!_isLocalTurn(state)) return  // ignore clicks during remote turn
     const worldX = (canvasX - view.panX) / view.zoom
     const worldY = (canvasY - view.panY) / view.zoom
     const hc = pixelToHex(worldX, worldY)
-    handleHexClick(state, hexKey(hc.q, hc.r))
+    const key = hexKey(hc.q, hc.r)
+    // Broadcast the click to P2P peers before applying locally
+    broadcastAction({ type: MSG_HEX_CLICK, hexKey: key })
+    handleHexClick(state, key)
   }
 
   // ── Mouse: drag-to-pan + click-to-act ────────────────────────────────────

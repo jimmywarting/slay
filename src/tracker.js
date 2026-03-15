@@ -1,4 +1,3 @@
-(function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.WebTorrent = f()}})(function(){var define,module,exports;
 const R = typeof Reflect === 'object' ? Reflect : null
 const ReflectApply = R && typeof R.apply === 'function'
   ? R.apply
@@ -1474,7 +1473,6 @@ class Client extends _$EventEmitter_6 {
 var _$Client_2 = Client
 
 var _$hgf_1 = {};
-window.Tracker = _$Client_2
-window.common = _$common_5
 
-});
+
+export { _$Client_2 as TrackerClient, _$common_5 as common }
