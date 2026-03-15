@@ -41,7 +41,9 @@ function initInput(canvasEl, getState, uiUpdater, isLocalTurnFn) {
     const worldY = (canvasY - view.panY) / view.zoom
     const hc = pixelToHex(worldX, worldY)
     const key = hexKey(hc.q, hc.r)
-    // Broadcast the click to P2P peers before applying locally
+    // Broadcast the click to all P2P peers, then apply locally.
+    // No echo-back risk: the host re-broadcasts only to OTHER peers (not the sender),
+    // so this player never receives its own action via the P2P channel.
     broadcastAction({ type: MSG_HEX_CLICK, hexKey: key })
     handleHexClick(state, key)
   }

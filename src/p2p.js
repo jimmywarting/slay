@@ -50,16 +50,18 @@ function randHex(bytes) {
   return common.arr2hex(arr)
 }
 
+// Maximum number of player slots the game supports
+const MAX_PLAYER_SLOTS = 6
+
 // Read or generate the room ID from the URL hash.
-function resolveRoomId(createNew) {
-  if (!createNew) {
-    const hash = window.location.hash.replace(/^#/, '')
-    if (/^slay-[0-9a-f]{40}$/i.test(hash)) {
-      return hash.slice('slay-'.length)
-    }
+// Exported so that callers (e.g. game.js) can pre-populate the URL bar.
+export function resolveOrGenerateRoomId() {
+  const hash = window.location.hash.replace(/^#/, '')
+  if (/^slay-[0-9a-f]{40}$/i.test(hash)) {
+    return hash.slice('slay-'.length)
   }
   const id = randHex(20)
-  window.location.hash = 'slay-' + id
+  window.history.replaceState(null, '', window.location.pathname + '#slay-' + id)
   return id
 }
 
@@ -105,7 +107,13 @@ export function initP2P({ localPlayerIndex: lpi = 0, createRoom = false } = {}) 
 
   _localPlayerIndex = lpi
   _isHostFlag       = (lpi === 0)
-  _roomId           = resolveRoomId(createRoom)
+
+  if (createRoom) {
+    _roomId = randHex(20)
+    window.history.replaceState(null, '', window.location.pathname + '#slay-' + _roomId)
+  } else {
+    _roomId = resolveOrGenerateRoomId()
+  }
 
   const localPeerId = randHex(20)
   const infoHash    = common.text2arr(_roomId).slice(0, 20)
@@ -249,6 +257,6 @@ function _onMessage(entry, msg, tempId) {
 function _nextFreeSlot() {
   const used = new Set([_localPlayerIndex])
   for (const e of _peers.values()) if (e.playerIndex >= 0) used.add(e.playerIndex)
-  for (let i = 1; i < 6; i++) if (!used.has(i)) return i
+  for (let i = 1; i < MAX_PLAYER_SLOTS; i++) if (!used.has(i)) return i
   return -1
 }

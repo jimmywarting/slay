@@ -14,7 +14,7 @@ import { getActiveNeuralAgent } from './agent-store.js'
 import { startTraining, stopTraining, resetTraining, isTrainingActive, getTrainingStats } from './train.js'
 import {
   initP2P, destroyP2P, broadcastAction, broadcastStateSync,
-  p2pBus, roomUrl,
+  p2pBus, roomUrl, resolveOrGenerateRoomId,
   MSG_HEX_CLICK, MSG_END_TURN, MSG_BUY_UNIT, MSG_BUILD_TOWER, MSG_UNDO_TURN
 } from './p2p.js'
 
@@ -131,18 +131,10 @@ function refreshRoomLink() {
     // Generate / preserve room URL (use current hash if present, otherwise eagerly generate one)
     let url = roomUrl()
     if (!url) {
-      // Pre-generate the room hash so the user can share it before starting
-      const hash = window.location.hash.replace(/^#/, '')
-      if (/^slay-[0-9a-f]{40}$/i.test(hash)) {
-        url = window.location.origin + window.location.pathname + '#' + hash
-      } else {
-        // Generate a new room ID now and put it in the URL bar (no reload)
-        const arr = new Uint8Array(20)
-        crypto.getRandomValues(arr)
-        const id = Array.from(arr).map(function (b) { return b.toString(16).padStart(2, '0') }).join('')
-        window.history.replaceState(null, '', window.location.pathname + '#slay-' + id)
-        url = window.location.origin + window.location.pathname + '#slay-' + id
-      }
+      // Pre-generate the room hash (using the same logic as initP2P) so the
+      // user can share the URL before clicking Start Game.
+      const id = resolveOrGenerateRoomId()
+      url = window.location.origin + window.location.pathname + '#slay-' + id
     }
     input.value = url
   }
@@ -329,9 +321,9 @@ function startNewGame() {
 
   if (p2pActive) destroyP2P()
 
-  // Only enable P2P when there are multiple human slots (real multiplayer needed)
-  // Single human + AI = local solo play (no tracker connection required)
-  if (needsP2P && humanSlots.length > 1) {
+  // Only enable P2P when there are multiple human slots (real multiplayer needed).
+  // Single human + AI slots = local solo play (no tracker connection required).
+  if (humanSlots.length > 1) {
     p2pLocalIndex = humanSlots[0]  // local player is the first human slot (usually 0)
     p2pActive = true
     initP2P({ localPlayerIndex: p2pLocalIndex, createRoom: false })
