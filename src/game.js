@@ -13,8 +13,9 @@ import { isAIPlayer, runAITurn, appendToLog } from './ai.js'
 import { getActiveNeuralAgent } from './agent-store.js'
 import { startTraining, stopTraining, resetTraining, isTrainingActive, getTrainingStats } from './train.js'
 import {
-  initP2P, destroyP2P, broadcastAction, broadcastStateSync,
-  p2pBus, roomUrl, resolveOrGenerateRoomId,
+  initP2P, destroyP2P, broadcastAction,
+  broadcastStartGame, sendStartGameTo, getLocalPlayerIndex,
+  p2pBus, roomUrl, resolveOrGenerateRoomId, isJoining,
   MSG_HEX_CLICK, MSG_END_TURN, MSG_BUY_UNIT, MSG_BUILD_TOWER, MSG_UNDO_TURN
 } from './p2p.js'
 
@@ -39,6 +40,7 @@ let watchLoopActive = false // guards against multiple concurrent loops
 let p2pActive       = false   // true while a P2P session is running
 let p2pLocalIndex   = -1      // which player index we control in P2P mode
 let _p2pRemoteActionResolver = null  // resolve() for waiting on remote moves
+let _guestLobbyMode = false   // true when page loaded with an existing room hash (joining)
 
 // Water density constants — controls how many random interior water hexes are placed
 const MIN_WATER_DENSITY  = 0.10  // floor for low player counts
@@ -65,6 +67,15 @@ function showStartScreen() {
   refreshPlayerPreview()
   refreshRoomLink()
   screen.style.display = 'flex'
+
+  // Guest lobby: disable all config controls and hide Start button
+  if (_guestLobbyMode) {
+    const btnStart = document.getElementById('btnStartGame')
+    if (btnStart) btnStart.style.display = 'none'
+    screen.querySelectorAll('.role-btn, .start-size-btn').forEach(function (b) {
+      b.disabled = true
+    })
+  }
 }
 
 function hideStartScreen() {
@@ -101,20 +112,22 @@ function refreshPlayerPreview() {
 
   listEl.innerHTML = html
 
-  // Wire role-button click events
-  listEl.querySelectorAll('.role-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      const pi   = parseInt(btn.dataset.player, 10)
-      const role = btn.dataset.role
+  // Wire role-button click events (disabled in guest lobby mode)
+  if (!_guestLobbyMode) {
+    listEl.querySelectorAll('.role-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const pi   = parseInt(btn.dataset.player, 10)
+        const role = btn.dataset.role
 
-      // Player 0 cannot be set to 'none'
-      if (pi === 0 && role === 'none') return
+        // Player 0 cannot be set to 'none'
+        if (pi === 0 && role === 'none') return
 
-      gameConfig.playerRoles[pi] = role
-      refreshPlayerPreview()
-      refreshRoomLink()
+        gameConfig.playerRoles[pi] = role
+        refreshPlayerPreview()
+        refreshRoomLink()
+      })
     })
-  })
+  }
 }
 
 // Update the room-link panel visibility and URL field
@@ -122,8 +135,8 @@ function refreshRoomLink() {
   const panel = document.getElementById('roomLinkPanel')
   if (!panel) return
 
-  // Show the room link if at least one 'human' slot exists (P2P potentially needed)
-  const hasHuman = gameConfig.playerRoles.some(function (r) { return r === 'human' })
+  // Always show the room link panel in guest lobby mode
+  const hasHuman = _guestLobbyMode || gameConfig.playerRoles.some(function (r) { return r === 'human' })
   panel.style.display = hasHuman ? '' : 'none'
 
   const input = document.getElementById('roomLinkInput')
@@ -131,8 +144,7 @@ function refreshRoomLink() {
     // Generate / preserve room URL (use current hash if present, otherwise eagerly generate one)
     let url = roomUrl()
     if (!url) {
-      // Pre-generate the room hash (using the same logic as initP2P) so the
-      // user can share the URL before clicking Start Game.
+      // Pre-generate the room hash so the user can share before clicking Start Game.
       const id = resolveOrGenerateRoomId()
       url = window.location.origin + window.location.pathname + '#slay-' + id
     }
@@ -141,10 +153,17 @@ function refreshRoomLink() {
 
   const statusEl = document.getElementById('p2pStatus')
   if (statusEl) {
-    statusEl.textContent = p2pActive
-      ? '✅ Room active – share the link above'
-      : 'Not connected – start the game to open the room.'
-    statusEl.className = p2pActive ? 'connected' : ''
+    if (_guestLobbyMode) {
+      statusEl.textContent = p2pActive
+        ? '⏳ Connected — waiting for host to start the game…'
+        : '🔗 Connecting to room…'
+      statusEl.className = p2pActive ? 'connected' : ''
+    } else {
+      statusEl.textContent = p2pActive
+        ? '✅ Room active – share the link above'
+        : 'Not connected – start the game to open the room.'
+      statusEl.className = p2pActive ? 'connected' : ''
+    }
   }
 }
 
@@ -305,6 +324,15 @@ function initGame() {
     })
   }
 
+  // Detect guest lobby mode: page loaded with an existing room hash
+  _guestLobbyMode = isJoining()
+  if (_guestLobbyMode) {
+    // Auto-connect to P2P as a guest — player index assigned by host later
+    p2pActive     = true
+    p2pLocalIndex = -1
+    initP2P({ localPlayerIndex: -1, numHumanSlots: 1 })
+  }
+
   // Show the start screen instead of jumping straight into the game
   showStartScreen()
 }
@@ -315,9 +343,8 @@ function startNewGame() {
   const numActive = roles.filter(function (r) { return r !== 'none' }).length
   const radius    = MAP_SIZES[gameConfig.mapSize] || MAP_SIZES.small
 
-  // Set up P2P if any slot is 'human' (there will be at least one – player 0)
+  // Collect human slots (players controlled by real humans)
   const humanSlots = roles.map(function (r, i) { return r === 'human' ? i : -1 }).filter(function (i) { return i >= 0 })
-  const needsP2P   = humanSlots.length > 0 // always true since at least one human
 
   if (p2pActive) destroyP2P()
 
@@ -326,7 +353,7 @@ function startNewGame() {
   if (humanSlots.length > 1) {
     p2pLocalIndex = humanSlots[0]  // local player is the first human slot (usually 0)
     p2pActive = true
-    initP2P({ localPlayerIndex: p2pLocalIndex, createRoom: false })
+    initP2P({ localPlayerIndex: p2pLocalIndex, numHumanSlots: humanSlots.length })
     refreshRoomLink()
   } else {
     p2pActive = false
@@ -337,11 +364,12 @@ function startNewGame() {
   render(gameState)
   updateUI(gameState)
 
-  // Sync state to peers after a short delay (let tracker connect)
+  // Broadcast the game start to any already-connected guests
   if (p2pActive) {
-    setTimeout(function () {
-      broadcastStateSync(gameState)
-    }, 2000)
+    broadcastStartGame(gameState, {
+      mapSize: gameConfig.mapSize,
+      playerRoles: gameConfig.playerRoles.slice()
+    })
   }
 
   runPendingAITurns()
@@ -872,8 +900,6 @@ p2pBus.addEventListener('remote_action', function (ev) {
       // Simulate a hex click from the remote player
       const hex = gameState.hexes[msg.hexKey]
       if (hex) {
-        // Import the click handler from input.js at runtime to avoid circular deps
-        // Instead, directly dispatch a custom DOM event that input.js already listens to
         const canvas = document.getElementById('gameCanvas')
         if (canvas) {
           canvas.dispatchEvent(new CustomEvent('p2p_hex_click', { detail: { hexKey: msg.hexKey } }))
@@ -913,14 +939,43 @@ p2pBus.addEventListener('remote_action', function (ev) {
   }
 })
 
+// Host sent us the full game state during a running game (re-sync)
 p2pBus.addEventListener('state_sync', function (ev) {
-  // Host sent us the full game state (we're a joining client)
   if (p2pLocalIndex === 0) return // host doesn't accept state syncs
   const incoming = ev.detail.state
   if (!incoming || !incoming.hexes) return
   gameState = incoming
-  // Restore player roles config from the received state
   if (gameState.playerRoles) gameConfig.playerRoles = gameState.playerRoles.slice()
+  hideStartScreen()
+  render(gameState)
+  updateUI(gameState)
+  runPendingAITurns()
+})
+
+// Host broadcasts game start — guests leave lobby and start playing
+p2pBus.addEventListener('start_game', function (ev) {
+  const incoming = ev.detail
+  // Apply host-provided config
+  if (incoming.config) {
+    if (incoming.config.mapSize) gameConfig.mapSize = incoming.config.mapSize
+    if (incoming.config.playerRoles) gameConfig.playerRoles = incoming.config.playerRoles.slice()
+  }
+  const state = incoming.state
+  if (!state || !state.hexes) return
+
+  // Sync the local player index from the p2p layer (host has assigned us a slot via MSG_ASSIGN)
+  const assignedIdx = getLocalPlayerIndex()
+  if (assignedIdx >= 0) {
+    p2pLocalIndex = assignedIdx
+  } else if (p2pLocalIndex < 0) {
+    p2pLocalIndex = 1  // fallback: first non-host slot
+  }
+
+  gameState = state
+  if (gameState.playerRoles) gameConfig.playerRoles = gameState.playerRoles.slice()
+
+  _guestLobbyMode = false  // game has started — lobby over
+  hideStartScreen()
   render(gameState)
   updateUI(gameState)
   runPendingAITurns()
@@ -928,13 +983,21 @@ p2pBus.addEventListener('state_sync', function (ev) {
 
 p2pBus.addEventListener('peer_connected', function (ev) {
   const idx = ev.detail.playerIndex
-  setMessage(gameState, '🌐 ' + (gameState ? gameState.players[idx].name : 'Player ' + idx) + ' connected!')
+  const dc  = ev.detail.dc
   if (gameState) {
+    setMessage(gameState, '🌐 ' + gameState.players[idx].name + ' connected!')
     render(gameState)
     updateUI(gameState)
-    // Host re-sends state to the new peer
-    if (p2pLocalIndex === 0) {
-      setTimeout(function () { broadcastStateSync(gameState) }, 500)
+    // Host: send the current game (or lobby state) to the newly connected peer
+    if (p2pLocalIndex === 0 && dc) {
+      setTimeout(function () {
+        if (gameState) {
+          sendStartGameTo(dc, gameState, {
+            mapSize: gameConfig.mapSize,
+            playerRoles: gameConfig.playerRoles.slice()
+          })
+        }
+      }, 500)
     }
   }
   refreshRoomLink()

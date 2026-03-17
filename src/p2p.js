@@ -1,21 +1,21 @@
-// P2P multiplayer: WebRTC peer discovery via BitTorrent-style tracker + DataChannel messaging
+// P2P multiplayer: WebRTC peer discovery via BitTorrent-style tracker + DataChannel messaging.
 //
-// Room identity  : URL hash (e.g. #slay-a1b2c3d4).  All players sharing the same
-//                  hash end up in the same "room" and are wired together.
-// Host vs client : Player 0 is always the host.  Other players are assigned slots
-//                  in joining order.
-// Move protocol  : Compact JSON messages sent over the DataChannel, see MSG_* constants.
+// Topology  : Host (player 0) connects to every guest. Each guest connects only to the host.
+//             The host re-broadcasts all game messages so every client stays in sync.
+// Room ID   : URL hash #slay-<40 hex chars>.  All players with the same hash join one room.
+// Lobby     : Guests stay on the start screen until the host sends MSG_START_GAME.
+//             Late joiners receive MSG_START_GAME with the current game state.
 
-import { TrackerClient, common } from './tracker.js'
+import { WebSocketTracker } from './tracker.js'
 
 // ── Public event bus ──────────────────────────────────────────────────────────
-// Consumers listen on the `p2pBus` EventTarget for CustomEvents.
-// Events dispatched:
-//   'peer_connected'    detail: { peerId, playerIndex }
+// Consumers listen on `p2pBus` for CustomEvents:
+//   'peer_connected'    detail: { playerIndex }
 //   'peer_disconnected' detail: { playerIndex }
-//   'remote_action'     detail: { type, ... } (same shape as local actions)
-//   'state_sync'        detail: { state }      (host sends full state)
-//   'room_ready'        detail: { roomId }      (tracker connected, room hash known)
+//   'remote_action'     detail: { type, ... }
+//   'state_sync'        detail: { state }
+//   'start_game'        detail: { state, config }
+//   'room_ready'        detail: { roomId }
 
 export const p2pBus = new EventTarget()
 
@@ -26,36 +26,38 @@ export const MSG_BUY_UNIT    = 'buy_unit'
 export const MSG_BUILD_TOWER = 'build_tower'
 export const MSG_UNDO_TURN   = 'undo_turn'
 export const MSG_STATE_SYNC  = 'state_sync'
-export const MSG_HELLO       = 'hello'   // first message after DataChannel opens
-export const MSG_ASSIGN      = 'assign'  // host tells peer their player index
+export const MSG_HELLO       = 'hello'
+export const MSG_ASSIGN      = 'assign'
+export const MSG_START_GAME  = 'start_game'
 
-// Public trackers that support WebRTC signalling
-const TRACKER_URLS = [
-  'wss://tracker.openwebtorrent.com',
-  'wss://tracker.btorrent.xyz'
-]
+// ── Guest detection ───────────────────────────────────────────────────────────
+// Checked once at module load, before any history.replaceState calls.
+const _initialHash = typeof window !== 'undefined' ? window.location.hash : ''
+
+/** Returns true when the page was opened with an existing room hash (guest joining). */
+export function isJoining () {
+  return /^#slay-[0-9a-f]{40}$/i.test(_initialHash)
+}
+
+const MAX_PLAYER_SLOTS = 6
 
 // ── Module state ──────────────────────────────────────────────────────────────
-let _client           = null   // TrackerClient
-let _roomId           = null   // hex string (40 chars)
-let _localPlayerIndex = -1     // which player slot we control
-let _isHostFlag       = false  // true if we are player 0
-let _peers            = new Map()  // tempId → { peer, playerIndex, ready }
+let _tracker           = null
+let _roomId            = null
+let _localPlayerIndex  = -1
+let _isHost            = false
+let _peers             = new Map()  // offerId → { dc, playerIndex, ready }
+let _expectedPeerCount = 0          // how many peers we expect (host: n-1, guest: 1)
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function randHex(bytes) {
+function randHex (bytes) {
   const arr = new Uint8Array(bytes)
   crypto.getRandomValues(arr)
-  return common.arr2hex(arr)
+  return [...arr].map(function (b) { return b.toString(16).padStart(2, '0') }).join('')
 }
 
-// Maximum number of player slots the game supports
-const MAX_PLAYER_SLOTS = 6
-
-// Read or generate the room ID from the URL hash.
-// Exported so that callers (e.g. game.js) can pre-populate the URL bar.
-export function resolveOrGenerateRoomId() {
+export function resolveOrGenerateRoomId () {
   const hash = window.location.hash.replace(/^#/, '')
   if (/^slay-[0-9a-f]{40}$/i.test(hash)) {
     return hash.slice('slay-'.length)
@@ -65,16 +67,15 @@ export function resolveOrGenerateRoomId() {
   return id
 }
 
-// Build the shareable room URL for display
-export function roomUrl() {
+export function roomUrl () {
   return _roomId
     ? window.location.origin + window.location.pathname + '#slay-' + _roomId
     : ''
 }
 
-export function isP2PConnected() { return _client !== null && !_client.destroyed }
-export function getLocalPlayerIndex() { return _localPlayerIndex }
-export function getConnectedPeerCount() {
+export function isP2PConnected ()     { return _tracker !== null }
+export function getLocalPlayerIndex () { return _localPlayerIndex }
+export function getConnectedPeerCount () {
   let n = 0
   for (const p of _peers.values()) if (p.ready) n++
   return n
@@ -82,16 +83,23 @@ export function getConnectedPeerCount() {
 
 // ── Send helpers ──────────────────────────────────────────────────────────────
 
-function sendTo(entry, msg) {
+function sendToDc (dc, msg) {
   try {
-    if (entry && entry.peer && entry.ready) {
-      entry.peer.send(JSON.stringify(msg))
-    }
+    if (dc && dc.readyState === 'open') dc.send(JSON.stringify(msg))
   } catch (_) {}
 }
 
-function broadcast(msg) {
-  for (const p of _peers.values()) sendTo(p, msg)
+function broadcast (msg) {
+  for (const p of _peers.values()) {
+    if (p.ready) sendToDc(p.dc, msg)
+  }
+}
+
+/** Guests send all messages to the host (first ready peer). */
+function sendToHost (msg) {
+  for (const p of _peers.values()) {
+    if (p.ready) { sendToDc(p.dc, msg); return }
+  }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -99,138 +107,175 @@ function broadcast(msg) {
 /**
  * Initialise (or re-initialise) the P2P layer.
  * @param {object} opts
- * @param {number}  opts.localPlayerIndex  Which player slot we control (0 = host).
- * @param {boolean} opts.createRoom        When true, always generate a fresh room ID.
+ * @param {number} opts.localPlayerIndex  Player slot we control. 0 = host. -1 = unknown (guest before assign).
+ * @param {number} opts.numHumanSlots     Total human player slots in this game (including self).
  */
-export function initP2P({ localPlayerIndex: lpi = 0, createRoom = false } = {}) {
+export function initP2P ({ localPlayerIndex = 0, numHumanSlots = 2 } = {}) {
   destroyP2P()
 
-  _localPlayerIndex = lpi
-  _isHostFlag       = (lpi === 0)
+  _localPlayerIndex  = localPlayerIndex
+  _isHost            = (localPlayerIndex === 0)
 
-  if (createRoom) {
-    _roomId = randHex(20)
+  // Resolve room ID from hash or generate a fresh one
+  if (isJoining()) {
+    _roomId = _initialHash.replace(/^#slay-/i, '')
     window.history.replaceState(null, '', window.location.pathname + '#slay-' + _roomId)
   } else {
     _roomId = resolveOrGenerateRoomId()
   }
 
-  const localPeerId = randHex(20)
-  const infoHash    = common.text2arr(_roomId).slice(0, 20)
-  const peerId      = common.text2arr(localPeerId).slice(0, 20)
+  // numwant: how many peer connections to create
+  //   host  → numHumanSlots - 1  (all other humans)
+  //   guest → 1                  (the host only)
+  _expectedPeerCount = _isHost ? Math.max(1, numHumanSlots - 1) : 1
 
-  _client = new TrackerClient({
-    infoHash,
-    peerId,
-    announce: TRACKER_URLS
+  _tracker           = new WebSocketTracker(_roomId)
+  _tracker.numwant   = _expectedPeerCount
+
+  _tracker.addEventListener('peer', function (ev) {
+    _onPeer(ev.detail.dc, ev.detail.offerId)
+  })
+  _tracker.addEventListener('message', function (ev) {
+    _onData(ev.detail.data, ev.detail.dc, ev.detail.offerId)
+  })
+  _tracker.addEventListener('peer-disconnect', function (ev) {
+    _onDisconnect(ev.detail.offerId)
+  })
+  _tracker.addEventListener('error', function (ev) {
+    console.warn('[p2p] tracker error:', ev.detail)
   })
 
-  _client.on('peer', _onNewPeer)
-  _client.on('warning', function (err) {
-    console.warn('[p2p] tracker warning:', err && err.message)
-  })
-  _client.on('error', function (err) {
-    console.error('[p2p] tracker error:', err && err.message)
-  })
-
-  _client.start()
+  _tracker.connect()
 
   p2pBus.dispatchEvent(new CustomEvent('room_ready', { detail: { roomId: _roomId } }))
   return _roomId
 }
 
 /** Disconnect from the room and clean up all WebRTC connections. */
-export function destroyP2P() {
-  if (_client) {
-    try { _client.destroy() } catch (_) {}
-    _client = null
-  }
-  for (const e of _peers.values()) {
-    try { e.peer.destroy() } catch (_) {}
+export function destroyP2P () {
+  if (_tracker) {
+    try { _tracker.close() } catch (_) {}
+    _tracker = null
   }
   _peers.clear()
-  _roomId = null
+  _roomId           = null
+  _localPlayerIndex = -1
+  _isHost           = false
 }
 
 /**
- * Send a game action to all connected peers.
- * The host re-broadcasts so every peer receives every move.
- * @param {object} action  Plain object with a `type` field.
+ * Send a game action.
+ * Host broadcasts to all peers; guests send only to the host.
  */
-export function broadcastAction(action) {
-  broadcast(action)
+export function broadcastAction (action) {
+  if (_isHost) {
+    broadcast(action)
+  } else {
+    sendToHost(action)
+  }
 }
 
 /**
- * Send the full serialised game state to all peers (host only).
- * @param {object} state  Plain-object snapshot of the current game state.
+ * Host sends the full serialised game state to all peers (re-sync).
  */
-export function broadcastStateSync(state) {
-  if (!_isHostFlag) return
-  // Use structuredClone if available, otherwise JSON round-trip
+export function broadcastStateSync (state) {
+  if (!_isHost) return
   const payload = typeof structuredClone === 'function'
     ? structuredClone(state)
     : JSON.parse(JSON.stringify(state))
   broadcast({ type: MSG_STATE_SYNC, state: payload })
 }
 
-// ── Internal peer wiring ──────────────────────────────────────────────────────
-
-function _onNewPeer(peer) {
-  const tempId = 'peer-' + Date.now() + '-' + Math.random()
-  const entry  = { peer, playerIndex: -1, ready: false }
-  _peers.set(tempId, entry)
-
-  peer.on('connect', function () {
-    entry.ready = true
-    sendTo(entry, { type: MSG_HELLO, from: _localPlayerIndex })
-  })
-
-  peer.on('data', function (raw) {
-    let msg
-    try {
-      msg = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw))
-    } catch (_) { return }
-    _onMessage(entry, msg, tempId)
-  })
-
-  peer.on('close', function () {
-    const idx = entry.playerIndex
-    _peers.delete(tempId)
-    p2pBus.dispatchEvent(new CustomEvent('peer_disconnected', {
-      detail: { playerIndex: idx }
-    }))
-  })
-
-  peer.on('error', function (err) {
-    console.warn('[p2p] peer error:', err && err.message)
-  })
+/**
+ * Host broadcasts MSG_START_GAME to move all guests out of the lobby.
+ * Also used when a late-joining peer connects: host sends the current state.
+ * @param {object} state   Current (or initial) game state snapshot.
+ * @param {object} config  { mapSize, playerRoles } — game config for the guest.
+ */
+export function broadcastStartGame (state, config) {
+  if (!_isHost) return
+  const payload = typeof structuredClone === 'function'
+    ? structuredClone(state)
+    : JSON.parse(JSON.stringify(state))
+  broadcast({ type: MSG_START_GAME, state: payload, config })
 }
 
-function _onMessage(entry, msg, tempId) {
+/**
+ * Send MSG_START_GAME to a single DataChannel (for late joiners).
+ */
+export function sendStartGameTo (dc, state, config) {
+  if (!_isHost) return
+  const payload = typeof structuredClone === 'function'
+    ? structuredClone(state)
+    : JSON.parse(JSON.stringify(state))
+  sendToDc(dc, { type: MSG_START_GAME, state: payload, config })
+}
+
+// ── Internal ──────────────────────────────────────────────────────────────────
+
+/** Close the tracker once all expected peers have connected (keep DataChannels open). */
+function _checkAllPeersConnected () {
+  if (getConnectedPeerCount() >= _expectedPeerCount && _tracker) {
+    try { _tracker.closeTracker() } catch (_) {}
+  }
+}
+
+function _onPeer (dc, offerId) {
+  const entry = { dc, playerIndex: -1, ready: true }
+  _peers.set(offerId, entry)
+  sendToDc(dc, { type: MSG_HELLO, from: _localPlayerIndex })
+  _checkAllPeersConnected()
+}
+
+function _onData (data, dc, offerId) {
+  let msg
+  try { msg = JSON.parse(data) } catch (_) { return }
+  const entry = _peers.get(offerId)
+  if (!entry) return
+  _onMessage(entry, msg, offerId)
+}
+
+function _onDisconnect (offerId) {
+  const entry = _peers.get(offerId)
+  const idx   = entry ? entry.playerIndex : -1
+  _peers.delete(offerId)
+  if (idx >= 0) {
+    p2pBus.dispatchEvent(new CustomEvent('peer_disconnected', { detail: { playerIndex: idx } }))
+  }
+}
+
+function _onMessage (entry, msg, offerId) {
   switch (msg.type) {
     case MSG_HELLO: {
-      entry.playerIndex = msg.from
-
-      if (_isHostFlag) {
-        // Assign the peer a slot if they are joining without a specific index
-        const assigned = msg.from >= 0 ? msg.from : _nextFreeSlot()
+      if (_isHost) {
+        // Assign a player index to this guest
+        const assigned = (msg.from >= 0 && msg.from < MAX_PLAYER_SLOTS) ? msg.from : _nextFreeSlot()
         entry.playerIndex = assigned
-        sendTo(entry, { type: MSG_ASSIGN, playerIndex: assigned })
+        sendToDc(entry.dc, { type: MSG_ASSIGN, playerIndex: assigned })
+      } else {
+        entry.playerIndex = msg.from
       }
-
       p2pBus.dispatchEvent(new CustomEvent('peer_connected', {
-        detail: { playerIndex: entry.playerIndex }
+        detail: { playerIndex: entry.playerIndex, dc: entry.dc }
       }))
       break
     }
 
     case MSG_ASSIGN: {
+      // Host assigned us a player index
       if (_localPlayerIndex < 0) {
         _localPlayerIndex = msg.playerIndex
-        _isHostFlag       = (_localPlayerIndex === 0)
+        _isHost           = (_localPlayerIndex === 0)
       }
+      entry.playerIndex = 0  // this peer is the host
       p2pBus.dispatchEvent(new CustomEvent('room_ready', { detail: { roomId: _roomId } }))
+      break
+    }
+
+    case MSG_START_GAME: {
+      p2pBus.dispatchEvent(new CustomEvent('start_game', {
+        detail: { state: msg.state, config: msg.config }
+      }))
       break
     }
 
@@ -240,13 +285,12 @@ function _onMessage(entry, msg, tempId) {
     }
 
     default: {
-      // Game action — bubble up to the game layer
+      // Game action — pass to the game layer
       p2pBus.dispatchEvent(new CustomEvent('remote_action', { detail: msg }))
-
-      // Host re-broadcasts to every OTHER peer for full fan-out
-      if (_isHostFlag) {
+      // Host re-broadcasts to every OTHER peer so all clients stay in sync
+      if (_isHost) {
         for (const [id, other] of _peers) {
-          if (id !== tempId) sendTo(other, msg)
+          if (id !== offerId && other.ready) sendToDc(other.dc, msg)
         }
       }
       break
@@ -254,7 +298,7 @@ function _onMessage(entry, msg, tempId) {
   }
 }
 
-function _nextFreeSlot() {
+function _nextFreeSlot () {
   const used = new Set([_localPlayerIndex])
   for (const e of _peers.values()) if (e.playerIndex >= 0) used.add(e.playerIndex)
   for (let i = 1; i < MAX_PLAYER_SLOTS; i++) if (!used.has(i)) return i
