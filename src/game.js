@@ -42,6 +42,11 @@ let p2pLocalIndex   = -1      // which player index we control in P2P mode
 let _p2pRemoteActionResolver = null  // resolve() for waiting on remote moves
 let _guestLobbyMode = false   // true when page loaded with an existing room hash (joining)
 
+// Lobby connection tracking (host side only)
+let _connectedLobbyPeers = new Set()  // playerIndex values that have connected in lobby
+let _hostLobbyP2P        = false      // true while host P2P is open before game start
+let _lobbyHumanSlotCount = 0          // numHumanSlots used in the current initP2P call
+
 // Water density constants — controls how many random interior water hexes are placed
 const MIN_WATER_DENSITY  = 0.10  // floor for low player counts
 const BASE_WATER_DENSITY = 0.26  // default density for max players
@@ -66,6 +71,7 @@ function showStartScreen() {
   // Populate the player list and room link based on current selections
   refreshPlayerPreview()
   refreshRoomLink()
+  refreshStartButtonState()
   screen.style.display = 'flex'
 
   // Guest lobby: disable all config controls and hide Start button
@@ -100,9 +106,32 @@ function refreshPlayerPreview() {
     const aiClass    = role === 'ai'    ? ' active-ai'    : ''
     const noneClass  = role === 'none'  ? ' active-none'  : ''
 
+    // Connection badge for human slots
+    let badge = ''
+    if (role === 'human') {
+      if (_guestLobbyMode) {
+        // Guest view: show "You" badge on the guest's own assigned slot
+        const myIdx = p2pLocalIndex >= 0 ? p2pLocalIndex : getLocalPlayerIndex()
+        if (i === myIdx) {
+          badge = `<span class="peer-badge peer-badge-you">👤 You</span>`
+        }
+      } else if (_hostLobbyP2P) {
+        // Host view: show connection status per human slot
+        if (i === p2pLocalIndex) {
+          badge = `<span class="peer-badge peer-badge-you">👤 You</span>`
+        } else if (_connectedLobbyPeers.has(i)) {
+          badge = `<span class="peer-badge peer-badge-joined">✓ Joined</span>`
+        } else {
+          badge = `<span class="peer-badge peer-badge-waiting">⌛ Waiting</span>`
+        }
+      }
+    }
+
     html += `<div class="player-row">` +
       `<span class="player-row-dot" style="background:${color}"></span>` +
       `<span class="player-row-name" style="color:${color}">${name}</span>` +
+      badge +
+      `<span class="player-row-spacer"></span>` +
       `<div class="role-toggle">` +
         `<button class="role-btn${humanClass}" data-player="${i}" data-role="human">👤 Human</button>` +
         `<button class="role-btn${aiClass}"    data-player="${i}" data-role="ai"   >🤖 AI</button>` +
@@ -125,9 +154,81 @@ function refreshPlayerPreview() {
         gameConfig.playerRoles[pi] = role
         refreshPlayerPreview()
         refreshRoomLink()
+        _updateLobbyP2P()
       })
     })
   }
+}
+
+// Start, restart, or stop P2P in lobby mode based on the current human slot config.
+// Called whenever roles change on the host's start screen.
+function _updateLobbyP2P() {
+  if (_guestLobbyMode) return
+
+  const humanSlots = gameConfig.playerRoles
+    .map(function (r, i) { return r === 'human' ? i : -1 })
+    .filter(function (i) { return i >= 0 })
+
+  if (humanSlots.length < 2) {
+    // Not enough humans for multiplayer — shut down lobby P2P if running
+    if (_hostLobbyP2P) {
+      destroyP2P()
+      p2pActive = false
+      _hostLobbyP2P = false
+      _lobbyHumanSlotCount = 0
+      _connectedLobbyPeers.clear()
+      refreshRoomLink()
+      refreshStartButtonState()
+    }
+    return
+  }
+
+  const needRestart = _hostLobbyP2P && humanSlots.length !== _lobbyHumanSlotCount
+
+  if (!_hostLobbyP2P || needRestart) {
+    // Destroy existing lobby P2P if slot count changed
+    if (_hostLobbyP2P) {
+      destroyP2P()
+      _connectedLobbyPeers.clear()
+    }
+    p2pLocalIndex = humanSlots[0]  // host is always the first human slot
+    p2pActive = true
+    _hostLobbyP2P = true
+    _lobbyHumanSlotCount = humanSlots.length
+    initP2P({ localPlayerIndex: p2pLocalIndex, numHumanSlots: humanSlots.length })
+    refreshRoomLink()
+    refreshPlayerPreview()
+  }
+
+  refreshStartButtonState()
+}
+
+// Enable or disable the Start Game button based on lobby peer connections.
+// Multiplayer games require all guest human slots to be connected before starting.
+function refreshStartButtonState() {
+  const btnStartGame = document.getElementById('btnStartGame')
+  if (!btnStartGame || _guestLobbyMode) return
+
+  const humanSlots = gameConfig.playerRoles
+    .map(function (r, i) { return r === 'human' ? i : -1 })
+    .filter(function (i) { return i >= 0 })
+
+  if (humanSlots.length < 2) {
+    // Single-player or no human — always allow start
+    btnStartGame.disabled = false
+    btnStartGame.title = ''
+    return
+  }
+
+  // Count guest slots that haven't connected yet
+  const waitingCount = humanSlots.filter(function (i) {
+    return i !== p2pLocalIndex && !_connectedLobbyPeers.has(i)
+  }).length
+
+  btnStartGame.disabled = waitingCount > 0
+  btnStartGame.title = waitingCount > 0
+    ? 'Waiting for ' + waitingCount + ' more player' + (waitingCount > 1 ? 's' : '') + ' to join…'
+    : ''
 }
 
 // Update the room-link panel visibility and URL field
@@ -281,6 +382,15 @@ function initGame() {
   if (btnNewGame) {
     btnNewGame.addEventListener('click', function () {
       stopWatchMode()
+      // Clean up any in-game P2P session before returning to lobby
+      if (p2pActive) {
+        destroyP2P()
+        p2pActive = false
+      }
+      _hostLobbyP2P = false
+      _lobbyHumanSlotCount = 0
+      _connectedLobbyPeers.clear()
+      gameState = null
       showStartScreen()
     })
   }
@@ -346,19 +456,26 @@ function startNewGame() {
   // Collect human slots (players controlled by real humans)
   const humanSlots = roles.map(function (r, i) { return r === 'human' ? i : -1 }).filter(function (i) { return i >= 0 })
 
-  if (p2pActive) destroyP2P()
-
   // Only enable P2P when there are multiple human slots (real multiplayer needed).
   // Single human + AI slots = local solo play (no tracker connection required).
   if (humanSlots.length > 1) {
     p2pLocalIndex = humanSlots[0]  // local player is the first human slot (usually 0)
     p2pActive = true
-    initP2P({ localPlayerIndex: p2pLocalIndex, numHumanSlots: humanSlots.length })
+    if (!_hostLobbyP2P) {
+      // P2P wasn't started in the lobby — initialise it now
+      initP2P({ localPlayerIndex: p2pLocalIndex, numHumanSlots: humanSlots.length })
+    }
     refreshRoomLink()
   } else {
+    if (p2pActive) destroyP2P()
     p2pActive = false
     p2pLocalIndex = humanSlots[0] >= 0 ? humanSlots[0] : 0
   }
+
+  // Reset lobby tracking now that the game is starting
+  _hostLobbyP2P = false
+  _lobbyHumanSlotCount = 0
+  _connectedLobbyPeers.clear()
 
   gameState = createGameState(roles, radius, calcWaterDensity(numActive))
   render(gameState)
@@ -985,6 +1102,14 @@ p2pBus.addEventListener('start_game', function (ev) {
 p2pBus.addEventListener('peer_connected', function (ev) {
   const idx = ev.detail.playerIndex
   const dc  = ev.detail.dc
+
+  // Track connected guests in lobby mode (host side) so Start Game can be unblocked
+  if (_hostLobbyP2P && !gameState && idx >= 0) {
+    _connectedLobbyPeers.add(idx)
+    refreshPlayerPreview()
+    refreshStartButtonState()
+  }
+
   if (gameState) {
     setMessage(gameState, '🌐 ' + gameState.players[idx].name + ' connected!')
     render(gameState)
@@ -1005,8 +1130,17 @@ p2pBus.addEventListener('peer_connected', function (ev) {
 })
 
 p2pBus.addEventListener('peer_disconnected', function (ev) {
-  setMessage(gameState, '⚠ A player disconnected.')
+  const idx = ev.detail ? ev.detail.playerIndex : -1
+
+  // Remove from lobby tracking if a guest disconnects before game start
+  if (_hostLobbyP2P && !gameState && idx >= 0) {
+    _connectedLobbyPeers.delete(idx)
+    refreshPlayerPreview()
+    refreshStartButtonState()
+  }
+
   if (gameState) {
+    setMessage(gameState, '⚠ A player disconnected.')
     render(gameState)
     updateUI(gameState)
   }
@@ -1014,6 +1148,15 @@ p2pBus.addEventListener('peer_disconnected', function (ev) {
 })
 
 p2pBus.addEventListener('room_ready', function () {
+  // When a guest receives their assigned player index, update p2pLocalIndex
+  // so the "👤 You" badge can be shown on the correct slot.
+  if (_guestLobbyMode && p2pLocalIndex < 0) {
+    const idx = getLocalPlayerIndex()
+    if (idx >= 0) {
+      p2pLocalIndex = idx
+      refreshPlayerPreview()
+    }
+  }
   refreshRoomLink()
 })
 

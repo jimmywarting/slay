@@ -404,9 +404,43 @@
     }
 
     .player-row-name {
-      flex: 1;
+      min-width: 50px;
       font-size: 0.85rem;
       font-weight: 600;
+    }
+
+    .peer-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border-radius: 10px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .peer-badge-you {
+      background: rgba(52, 152, 219, 0.2);
+      color: #74b9e2;
+      border: 1px solid rgba(52, 152, 219, 0.35);
+    }
+
+    .peer-badge-joined {
+      background: rgba(46, 204, 113, 0.2);
+      color: #27ae60;
+      border: 1px solid rgba(46, 204, 113, 0.35);
+    }
+
+    .peer-badge-waiting {
+      background: rgba(243, 156, 18, 0.15);
+      color: #d4890d;
+      border: 1px solid rgba(243, 156, 18, 0.3);
+    }
+
+    /* Spacer so role-toggle stays right-aligned when badge is present */
+    .player-row-spacer {
+      flex: 1;
     }
 
     .role-toggle {
@@ -529,6 +563,15 @@
 
     #btnStartGame:hover {
       background: #f0d84e;
+    }
+
+    #btnStartGame:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      filter: grayscale(0.4);
+    }
+    #btnStartGame:disabled:hover {
+      background: #dbc447;
     }
   </style>
 </head>
