@@ -1,0 +1,402 @@
+// Map generation: hexagonal island with terrain and player starting areas
+
+import { hexKey, hexNeighborKeys, hexDistance } from './hex.js'
+import { TERRAIN_WATER, TERRAIN_LAND, TERRAIN_TREE, TERRAIN_PALM, STRUCTURE_HUT } from './constants.js'
+
+// Named map size presets (radius in hex rings)
+const MAP_SIZES = { small: 7, medium: 11, large: 16 }
+
+const MAP_RADIUS_DEFAULT = MAP_SIZES.small
+const NUM_PLAYERS = 6   // always 6 colour zones on the map
+const SEEDS_PER_PLAYER = 3  // each player gets 3 random starting seeds → multiple territories
+
+// ── Grid creation ─────────────────────────────────────────────────────────────
+
+// generateHexMap(radius, waterDensity)
+//   radius       – hex grid radius (number of rings from centre)
+//   waterDensity – fraction of interior land to convert to random water (0–1).
+//                  Creates inland lakes, channels and potential islands.
+//                  Defaults to 0.22 which gives a natural archipelago feel.
+function generateHexMap(radius, waterDensity) {
+  const R = radius || MAP_RADIUS_DEFAULT
+  const density = waterDensity ?? 0.22
+  const hexes = {}
+
+  for (let q = -R; q <= R; q++) {
+    for (let r = -R; r <= R; r++) {
+      // Axial hex constraint: keep the grid hexagonal
+      if (Math.abs(q + r) > R) continue
+      const dist = Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r))
+      const terrain = dist >= R - 1 ? TERRAIN_WATER : TERRAIN_LAND
+      hexes[hexKey(q, r)] = {
+        q, r,
+        terrain,
+        owner: null,
+        unit: null,
+        structure: null,
+        gravestoneAge: 0
+      }
+    }
+  }
+
+  // Coastal erosion: naturally vary the shoreline
+  for (const key in hexes) {
+    const hex = hexes[key]
+    if (hex.terrain !== TERRAIN_LAND) continue
+    const dist = Math.max(Math.abs(hex.q), Math.abs(hex.r), Math.abs(hex.q + hex.r))
+    if (dist === R - 2 && Math.random() < 0.35) {
+      hex.terrain = TERRAIN_WATER
+    }
+  }
+
+  // Random interior water — creates lakes, channels, and potential islands
+  if (density > 0) {
+    for (const key in hexes) {
+      const hex = hexes[key]
+      if (hex.terrain !== TERRAIN_LAND) continue
+      if (Math.random() < density) {
+        hex.terrain = TERRAIN_WATER
+      }
+    }
+  }
+
+  // Guarantee all land hexes are reachable — bridge any isolated islands
+  ensureLandConnectivity(hexes)
+
+  return hexes
+}
+
+// ── Land connectivity ─────────────────────────────────────────────────────────
+
+// Find all connected land components (returns array of arrays of hex keys).
+function findLandComponents(hexes) {
+  const visited = {}
+  const components = []
+
+  for (const startKey in hexes) {
+    if (visited[startKey]) continue
+    const startHex = hexes[startKey]
+    if (startHex.terrain === TERRAIN_WATER) continue
+
+    const component = []
+    const queue = [startKey]
+    visited[startKey] = true
+
+    while (queue.length > 0) {
+      const k = queue.shift()
+      component.push(k)
+      const h = hexes[k]
+      const nbrs = hexNeighborKeys(h.q, h.r)
+      for (let i = 0; i < nbrs.length; i++) {
+        const nk = nbrs[i]
+        if (!visited[nk] && hexes[nk] && hexes[nk].terrain !== TERRAIN_WATER) {
+          visited[nk] = true
+          queue.push(nk)
+        }
+      }
+    }
+
+    components.push(component)
+  }
+
+  // Sort largest first
+  components.sort(function (a, b) { return b.length - a.length })
+  return components
+}
+
+// BFS shortest path between two hex keys (all hexes treated as passable).
+// Returns the array of keys along the path (inclusive of start and end).
+function bfsPath(hexes, startKey, endKey) {
+  if (startKey === endKey) return [startKey]
+
+  const prev = {}
+  prev[startKey] = null
+  const queue = [startKey]
+
+  while (queue.length > 0) {
+    const k = queue.shift()
+    if (k === endKey) break
+    const h = hexes[k]
+    const nbrs = hexNeighborKeys(h.q, h.r)
+    for (let i = 0; i < nbrs.length; i++) {
+      const nk = nbrs[i]
+      if (!(nk in prev) && hexes[nk]) {
+        prev[nk] = k
+        queue.push(nk)
+      }
+    }
+  }
+
+  // Reconstruct path from end → start
+  const path = []
+  let cur = endKey
+  while (cur !== null && cur !== undefined) {
+    path.unshift(cur)
+    cur = prev[cur]
+  }
+  return path
+}
+
+// Bridge all disconnected land components to the largest component using land
+// paths, so every land hex is reachable from every other land hex.
+function ensureLandConnectivity(hexes) {
+  let components = findLandComponents(hexes)
+
+  while (components.length > 1) {
+    const main = components[0]
+
+    // Find the closest pair of hexes between the main component and any other
+    let bestDist = Infinity
+    let bridgeFrom = null
+    let bridgeTo   = null
+
+    for (let ci = 1; ci < components.length; ci++) {
+      const comp = components[ci]
+      for (let i = 0; i < comp.length; i++) {
+        const ha = hexes[comp[i]]
+        for (let j = 0; j < main.length; j++) {
+          const hb = hexes[main[j]]
+          const d = hexDistance(ha.q, ha.r, hb.q, hb.r)
+          if (d < bestDist) {
+            bestDist   = d
+            bridgeFrom = comp[i]
+            bridgeTo   = main[j]
+          }
+        }
+      }
+    }
+
+    if (bridgeFrom && bridgeTo) {
+      // Convert every water hex along the BFS path to land
+      const path = bfsPath(hexes, bridgeFrom, bridgeTo)
+      for (let i = 0; i < path.length; i++) {
+        if (hexes[path[i]].terrain === TERRAIN_WATER) {
+          hexes[path[i]].terrain = TERRAIN_LAND
+        }
+      }
+    }
+
+    components = findLandComponents(hexes)
+  }
+}
+
+// ── Terrain decoration ────────────────────────────────────────────────────────
+
+// Randomly scatter trees and palms on land hexes that have no structure/unit.
+// Called after ownership is assigned so huts are already placed and excluded.
+function addRandomTerrain(hexes) {
+  for (const key in hexes) {
+    const hex = hexes[key]
+    // Only decorate plain, empty, owned land
+    if (hex.terrain !== TERRAIN_LAND || hex.structure || hex.unit) continue
+
+    const nearWater = hexNeighborKeys(hex.q, hex.r).some(function (k) {
+      const n = hexes[k]
+      return !n || n.terrain === TERRAIN_WATER
+    })
+
+    if (nearWater) {
+      if (Math.random() < 0.25) hex.terrain = TERRAIN_PALM
+    } else {
+      if (Math.random() < 0.15) hex.terrain = TERRAIN_TREE
+    }
+  }
+}
+
+// ── Territory assignment ──────────────────────────────────────────────────────
+
+// Randomly distribute all non-water hexes among NUM_PLAYERS players using a
+// multi-seed BFS flood fill.  Each player gets SEEDS_PER_PLAYER random starting
+// hexes so the resulting regions are scattered across the whole map rather than
+// forming a single contiguous zone.  After the flood fill, connected components
+// are identified and each ≥2-hex component for an *active* player receives a hut.
+// Active players (index < numActivePlayers) get huts + a starting bank.
+// Inactive players (index >= numActivePlayers) have their colored land drawn on
+// the map but receive no huts and no starting gold.
+function placeStartingTerritories(hexes, numActivePlayers) {
+  // ── Step 1: collect and shuffle all non-water land hexes ──────────────────
+  const allLandKeys = Object.keys(hexes).filter(k => hexes[k].terrain !== TERRAIN_WATER)
+  shuffleArray(allLandKeys)
+
+  // ── Step 2: place seeds — SEEDS_PER_PLAYER seeds per player ──────────────
+  // Seeds are selected so that each player's seeds are spread across the map.
+  // We interleave seeds round-robin from the shuffled list for even distribution.
+  const totalSeeds = NUM_PLAYERS * SEEDS_PER_PLAYER
+  const seedSlice = allLandKeys.slice(0, Math.min(totalSeeds, allLandKeys.length))
+
+  const queues = Array.from({ length: NUM_PLAYERS }, () => [])
+  for (let i = 0; i < seedSlice.length; i++) {
+    const p = i % NUM_PLAYERS
+    hexes[seedSlice[i]].owner = p
+    queues[p].push(seedSlice[i])
+  }
+
+  // ── Step 3: BFS flood fill from all seeds simultaneously ─────────────────
+  // Process one hex per player per round to keep region sizes balanced.
+  let anyWork = true
+  while (anyWork) {
+    anyWork = false
+    for (let p = 0; p < NUM_PLAYERS; p++) {
+      if (queues[p].length === 0) continue
+      anyWork = true
+      const k = queues[p].shift()
+      const hex = hexes[k]
+      const nbrs = hexNeighborKeys(hex.q, hex.r)
+      shuffleArray(nbrs) // randomise expansion direction
+      for (let i = 0; i < nbrs.length; i++) {
+        const nk = nbrs[i]
+        const nh = hexes[nk]
+        if (!nh || nh.terrain === TERRAIN_WATER || nh.owner !== null) continue
+        nh.owner = p
+        queues[p].push(nk)
+      }
+    }
+  }
+
+  // ── Step 4: find connected components ─────────────────────────────────────
+  const territories = findConnectedComponents(hexes)
+
+  // ── Step 5: place hut in every ≥2-hex component owned by an active player ──
+  for (let ti = 0; ti < territories.length; ti++) {
+    const territory = territories[ti]
+    // Inactive players' territories are drawn but get no huts
+    if (territory.owner >= numActivePlayers) continue
+    if (territory.hexKeys.length < 2) continue
+
+    // Prefer a plain land hex (no tree) for the hut
+    let hutKey = null
+    for (let i = 0; i < territory.hexKeys.length; i++) {
+      const h = hexes[territory.hexKeys[i]]
+      if (h.terrain === TERRAIN_LAND && !h.unit && !h.structure) {
+        hutKey = territory.hexKeys[i]
+        break
+      }
+    }
+    // Fallback: use first hex regardless of terrain, clear it to land
+    if (!hutKey) {
+      hutKey = territory.hexKeys[0]
+      hexes[hutKey].terrain = TERRAIN_LAND
+    }
+    hexes[hutKey].structure = STRUCTURE_HUT
+    territory.hutHexKey = hutKey
+  }
+
+  // ── Step 6: guarantee each *active* player has at least one hut ─────────────
+  // Inactive players intentionally have no huts.
+  for (let p = 0; p < numActivePlayers; p++) {
+    const hasHut = territories.some(t => t.owner === p && t.hutHexKey !== null)
+    if (hasHut) continue
+
+    // Find the player's largest component
+    const playerTerrs = territories.filter(t => t.owner === p)
+    if (playerTerrs.length === 0) continue
+
+    const target = playerTerrs.reduce(
+      (best, t) => t.hexKeys.length > best.hexKeys.length ? t : best,
+      playerTerrs[0]
+    )
+
+    // Try to absorb an adjacent non-water hex from any neighbour
+    let adopted = false
+    for (let i = 0; i < target.hexKeys.length && !adopted; i++) {
+      const h = hexes[target.hexKeys[i]]
+      const nbrs = hexNeighborKeys(h.q, h.r)
+      for (let j = 0; j < nbrs.length && !adopted; j++) {
+        const nk = nbrs[j]
+        const nh = hexes[nk]
+        if (!nh || nh.terrain === TERRAIN_WATER) continue
+        if (nh.owner === p) continue // already ours
+
+        // Remove nk from the old owner's territory
+        const oldOwner = nh.owner
+        for (let ti = 0; ti < territories.length; ti++) {
+          const ot = territories[ti]
+          if (ot.owner !== oldOwner) continue
+          const idx = ot.hexKeys.indexOf(nk)
+          if (idx === -1) continue
+          ot.hexKeys.splice(idx, 1)
+          if (ot.hutHexKey === nk) ot.hutHexKey = null
+          break
+        }
+
+        // Give the hex to player p and grow target component
+        nh.owner = p
+        target.hexKeys.push(nk)
+
+        // Place hut on the new hex (ensure terrain is land)
+        nh.terrain = TERRAIN_LAND
+        nh.structure = STRUCTURE_HUT
+        target.hutHexKey = nk
+        adopted = true
+      }
+    }
+  }
+
+  // ── Step 7: assign bank and add terrain decorations ───────────────────────
+  // Active players start with 3 gold + 1 per tile in the territory.
+  // Inactive players have no gold.
+  for (let ti = 0; ti < territories.length; ti++) {
+    territories[ti].bank = territories[ti].owner < numActivePlayers
+      ? 3 + territories[ti].hexKeys.length
+      : 0
+  }
+
+  addRandomTerrain(hexes) // place trees/palms after huts so they don't cover them
+
+  return territories
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// BFS to find all connected components of owned non-water hexes
+function findConnectedComponents(hexes) {
+  const visited = {}
+  const territories = []
+
+  for (const startKey in hexes) {
+    const startHex = hexes[startKey]
+    if (startHex.owner === null || visited[startKey] || startHex.terrain === TERRAIN_WATER) continue
+
+    const component = []
+    const queue = [startKey]
+    visited[startKey] = true
+
+    while (queue.length > 0) {
+      const k = queue.shift()
+      const hex = hexes[k]
+      if (!hex) continue
+      component.push(k)
+
+      const nbrs = hexNeighborKeys(hex.q, hex.r)
+      for (let i = 0; i < nbrs.length; i++) {
+        const nk = nbrs[i]
+        if (!visited[nk]) {
+          const nh = hexes[nk]
+          if (nh && nh.owner === hex.owner && nh.terrain !== TERRAIN_WATER) {
+            visited[nk] = true
+            queue.push(nk)
+          }
+        }
+      }
+    }
+
+    territories.push({
+      owner: startHex.owner,
+      hexKeys: component,
+      bank: 0,
+      hutHexKey: null
+    })
+  }
+
+  return territories
+}
+
+// Fisher–Yates shuffle in-place
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+}
+
+export { generateHexMap, placeStartingTerritories, MAP_SIZES, MAP_RADIUS_DEFAULT }

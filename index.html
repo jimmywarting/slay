@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Slay – Turn-Based Strategy</title>
+  <meta name="description" content="A turn-based hex strategy game with AI opponents. Play offline!">
+  <meta name="theme-color" content="#1a2b3c">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Slay">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      background: #0f2030;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      color: #ecf0f1;
+    }
+
+    #gameCanvas {
+      flex: 1;
+      display: block;
+      cursor: default;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #sidebar {
+      width: 280px;
+      flex-shrink: 0;
+      background: #1a2b3c;
+      border-left: 2px solid #2c3e50;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      overflow-y: auto;
+    }
+
+    .panel {
+      padding: 14px 16px;
+      border-bottom: 1px solid #2c3e50;
+    }
+
+    .panel h2 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+      letter-spacing: 0.04em;
+    }
+
+    #playerName {
+      font-size: 1.25rem;
+      font-weight: 800;
+      display: block;
+    }
+
+    #turnNumber {
+      font-size: 0.85rem;
+      color: #95a5a6;
+    }
+
+    #territoryInfo {
+      font-size: 0.85rem;
+      line-height: 1.6;
+      color: #bdc3c7;
+      min-height: 60px;
+    }
+
+    #hexInfo {
+      font-size: 0.8rem;
+      line-height: 1.5;
+      color: #bdc3c7;
+      min-height: 28px;
+    }
+
+    #message {
+      font-size: 0.82rem;
+      color: #f39c12;
+      min-height: 18px;
+      line-height: 1.4;
+    }
+
+    .btn-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    button {
+      padding: 9px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    #btnEndTurn {
+      background: #27ae60;
+      color: #fff;
+    }
+    #btnEndTurn:hover:not(:disabled) { background: #229954; }
+
+    #btnUndo {
+      background: #e67e22;
+      color: #fff;
+    }
+    #btnUndo:hover:not(:disabled) { background: #ca6f1e; }
+
+    #btnBuyPeasant, #btnBuySpearman, #btnBuyKnight, #btnBuyBaron {
+      background: #f39c12;
+      color: #fff;
+    }
+    #btnBuyPeasant:hover:not(:disabled)  { background: #d68910; }
+    #btnBuySpearman:hover:not(:disabled) { background: #d68910; }
+    #btnBuyKnight:hover:not(:disabled)   { background: #d68910; }
+    #btnBuyBaron:hover:not(:disabled)    { background: #d68910; }
+
+    #btnBuildTower {
+      background: #8e44ad;
+      color: #fff;
+    }
+    #btnBuildTower:hover:not(:disabled) { background: #7d3c98; }
+
+    .legend-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      color: #bdc3c7;
+    }
+    .legend-table th {
+      text-align: left;
+      padding: 3px 4px;
+      border-bottom: 1px solid #2c3e50;
+      color: #95a5a6;
+      font-weight: 600;
+    }
+    .legend-table td {
+      padding: 3px 4px;
+    }
+
+    .key-desc {
+      font-size: 0.75rem;
+      color: #7f8c8d;
+      line-height: 1.7;
+    }
+
+    .section-title {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #7f8c8d;
+      margin-bottom: 4px;
+    }
+
+    #aiLog {
+      font-size: 0.72rem;
+      color: #95a5a6;
+      line-height: 1.5;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    #aiLog p {
+      margin: 2px 0;
+    }
+
+    /* Training panel */
+    #trainStatus {
+      font-size: 0.82rem;
+      color: #95a5a6;
+      margin-bottom: 6px;
+    }
+    #trainProgress {
+      font-size: 0.75rem;
+      color: #bdc3c7;
+      line-height: 1.7;
+      min-height: 52px;
+      margin-bottom: 4px;
+    }
+    #trainChart {
+      font-family: monospace;
+      font-size: 0.85rem;
+      letter-spacing: 1px;
+      color: #2ecc71;
+      min-height: 16px;
+      margin-bottom: 6px;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    #btnTrain {
+      background: #2980b9;
+      color: #fff;
+    }
+    #btnTrain:hover:not(:disabled) { background: #2471a3; }
+    #btnStopTrain {
+      background: #c0392b;
+      color: #fff;
+    }
+    #btnStopTrain:hover:not(:disabled) { background: #a93226; }
+    #btnResetTrain {
+      background: #34495e;
+      color: #bdc3c7;
+      font-size: 0.75rem;
+      padding: 6px 10px;
+    }
+    #btnResetTrain:hover:not(:disabled) { background: #2c3e50; }
+
+    #btnWatchAI {
+      background: #16a085;
+      color: #fff;
+    }
+    #btnWatchAI:hover:not(:disabled) { background: #138d75; }
+    #btnWatchAI.watching {
+      background: #c0392b;
+    }
+    #btnWatchAI.watching:hover:not(:disabled) { background: #a93226; }
+
+    #btnNewGame {
+      background: #34495e;
+      color: #bdc3c7;
+    }
+    #btnNewGame:hover:not(:disabled) { background: #2c3e50; }
+
+    /* ── Mobile / touch layout ───────────────────────────────────────────────
+       On narrow screens the sidebar moves to the bottom so the map can use
+       the full screen width.  Buttons grow to comfortable touch targets.    */
+    @media (max-width: 768px) {
+      body {
+        flex-direction: column;
+        /* safe-area insets for iPhone notch / home-bar (all sides) */
+        padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      }
+
+      #gameCanvas {
+        width: 100%;
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+
+      #sidebar {
+        width: 100%;
+        max-height: 38vh;
+        flex-shrink: 0;
+        border-left: none;
+        border-top: 2px solid #2c3e50;
+        overflow-y: auto;
+        overflow-x: hidden;
+        /* Horizontal scrollable row of panels */
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        gap: 0;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .panel {
+        min-width: 220px;
+        border-bottom: none;
+        border-right: 1px solid #2c3e50;
+        flex-shrink: 0;
+      }
+
+      button {
+        min-height: 44px;
+        font-size: 0.95rem;
+        padding: 10px 14px;
+      }
+    }
+
+    /* Extra-small screens (phones in portrait) */
+    @media (max-width: 420px) {
+      #sidebar {
+        max-height: 42vh;
+      }
+      .panel {
+        min-width: 180px;
+      }
+    }
+
+    /* ── Start screen overlay ───────────────────────────────────────────────── */
+    #startScreen {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: #0a1a28;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .start-panel {
+      background: #1a2b3c;
+      border: 2px solid #2c3e50;
+      border-radius: 14px;
+      padding: 32px 28px 28px;
+      max-width: 460px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .start-panel h1 {
+      font-size: 3.2rem;
+      font-weight: 900;
+      color: #dbc447;
+      letter-spacing: 0.12em;
+      margin-bottom: 4px;
+      text-shadow: 0 2px 12px rgba(219,196,71,0.35);
+    }
+
+    .start-panel .start-subtitle {
+      font-size: 0.9rem;
+      color: #7f8c8d;
+      margin-bottom: 28px;
+    }
+
+    .start-section {
+      margin-bottom: 22px;
+      text-align: left;
+    }
+
+    .start-section h3 {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #7f8c8d;
+      margin-bottom: 10px;
+    }
+
+    .start-btn-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .start-size-btn,
+    .start-players-btn {
+      flex: 1;
+      padding: 9px 10px;
+      border: 2px solid #2c3e50;
+      border-radius: 8px;
+      background: #0f2030;
+      color: #bdc3c7;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      min-height: 40px;
+    }
+
+    .start-size-btn:hover,
+    .start-players-btn:hover {
+      border-color: #dbc447;
+      color: #fff;
+    }
+
+    .start-size-btn.active,
+    .start-players-btn.active {
+      border-color: #dbc447;
+      background: #27381a;
+      color: #dbc447;
+    }
+
+    .start-size-hint {
+      font-size: 0.68rem;
+      color: #566573;
+      margin-top: 6px;
+    }
+
+    /* Player role rows in the start screen */
+    #startPlayerList {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
+    .player-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .player-row-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .player-row-name {
+      min-width: 50px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .peer-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border-radius: 10px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .peer-badge-you {
+      background: rgba(52, 152, 219, 0.2);
+      color: #74b9e2;
+      border: 1px solid rgba(52, 152, 219, 0.35);
+    }
+
+    .peer-badge-joined {
+      background: rgba(46, 204, 113, 0.2);
+      color: #27ae60;
+      border: 1px solid rgba(46, 204, 113, 0.35);
+    }
+
+    .peer-badge-waiting {
+      background: rgba(243, 156, 18, 0.15);
+      color: #d4890d;
+      border: 1px solid rgba(243, 156, 18, 0.3);
+    }
+
+    /* Spacer so role-toggle stays right-aligned when badge is present */
+    .player-row-spacer {
+      flex: 1;
+    }
+
+    .role-toggle {
+      display: flex;
+      border: 1px solid #2c3e50;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .role-btn {
+      padding: 4px 9px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      background: #0f2030;
+      color: #7f8c8d;
+      border: none;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .role-btn:not(:last-child) {
+      border-right: 1px solid #2c3e50;
+    }
+
+    .role-btn.active-human {
+      background: #27381a;
+      color: #7ec850;
+    }
+
+    .role-btn.active-ai {
+      background: #1a2540;
+      color: #5b9bd5;
+    }
+
+    .role-btn.active-none {
+      background: #251515;
+      color: #c0392b;
+    }
+
+    /* Room link panel */
+    #roomLinkPanel {
+      margin-top: 14px;
+      background: #111e2d;
+      border: 1px solid #2c3e50;
+      border-radius: 8px;
+      padding: 12px 14px;
+      text-align: left;
+    }
+
+    #roomLinkPanel .room-label {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #7f8c8d;
+      margin-bottom: 6px;
+    }
+
+    .room-url-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    #roomLinkInput {
+      flex: 1;
+      background: #0f2030;
+      border: 1px solid #2c3e50;
+      border-radius: 5px;
+      color: #bdc3c7;
+      font-size: 0.72rem;
+      padding: 5px 8px;
+      font-family: monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #btnCopyLink {
+      background: #2c3e50;
+      border: none;
+      border-radius: 5px;
+      color: #ecf0f1;
+      padding: 5px 10px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+
+    #btnCopyLink:hover { background: #3d5166; }
+
+    .room-hint {
+      font-size: 0.65rem;
+      color: #566573;
+      margin-top: 5px;
+    }
+
+    #p2pStatus {
+      font-size: 0.7rem;
+      color: #7f8c8d;
+      margin-top: 4px;
+    }
+
+    #p2pStatus.connected { color: #7ec850; }
+
+    #btnStartGame {
+      width: 100%;
+      padding: 14px;
+      margin-top: 8px;
+      background: #dbc447;
+      color: #0f2030;
+      border: none;
+      border-radius: 8px;
+      font-size: 1.1rem;
+      font-weight: 800;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: background 0.15s;
+    }
+
+    #btnStartGame:hover {
+      background: #f0d84e;
+    }
+
+    #btnStartGame:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      filter: grayscale(0.4);
+    }
+    #btnStartGame:disabled:hover {
+      background: #dbc447;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Start screen overlay ───────────────────────────────────────────────── -->
+<div id="startScreen">
+  <div class="start-panel">
+    <h1>⚔️ SLAY</h1>
+    <p class="start-subtitle">Turn-Based Hex Strategy</p>
+
+    <div class="start-section">
+      <h3>Map Size</h3>
+      <div class="start-btn-row">
+        <button class="start-size-btn active" data-size="small">Small</button>
+        <button class="start-size-btn" data-size="medium">Medium</button>
+        <button class="start-size-btn" data-size="large">Large</button>
+      </div>
+      <div class="start-size-hint">Small: 7-ring hex &nbsp;·&nbsp; Medium: 11-ring hex &nbsp;·&nbsp; Large: 16-ring hex</div>
+    </div>
+
+    <div class="start-section">
+      <h3>Players — choose Human / AI / None per slot</h3>
+      <div id="startPlayerList"></div>
+
+      <!-- Multiplayer room link (shown when ≥1 human slot is set) -->
+      <div id="roomLinkPanel">
+        <div class="room-label">🌐 Online room link</div>
+        <div class="room-url-row">
+          <input id="roomLinkInput" type="text" readonly>
+          <button id="btnCopyLink">Copy</button>
+        </div>
+        <div class="room-hint">Share this link so others can join. They enter the same URL (or paste the hash).</div>
+        <div id="p2pStatus">Not connected — start the game to open the room.</div>
+      </div>
+    </div>
+
+    <button id="btnStartGame">⚔️ Start Game</button>
+  </div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="sidebar">
+
+  <div class="panel">
+    <span id="playerName">Loading…</span>
+    <span id="turnNumber"></span>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">Territory</div>
+    <div id="territoryInfo"><em>Click a hex to see territory info</em></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">Selected Hex</div>
+    <div id="hexInfo"></div>
+  </div>
+
+  <div class="panel">
+    <div id="message"></div>
+  </div>
+
+  <div class="panel">
+    <div class="btn-group">
+      <button id="btnBuyPeasant">Buy Peasant (5g)</button>
+      <button id="btnBuySpearman">Buy Spearman (10g)</button>
+      <button id="btnBuyKnight">Buy Knight (15g)</button>
+      <button id="btnBuyBaron">Buy Baron (20g)</button>
+      <button id="btnBuildTower">Build Tower (10g)</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="btn-group">
+      <button id="btnEndTurn">End Turn ▶</button>
+      <button id="btnUndo">↩ Undo Turn</button>
+      <button id="btnWatchAI">👁 Watch AI</button>
+      <button id="btnNewGame">🔄 New Game</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">AI Log</div>
+    <div id="aiLog"><em style="color:#7f8c8d">AI activity will appear here.</em></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">Units</div>
+    <div id="legend"></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">🧠 Train AI (TensorFlow.js)</div>
+    <div id="trainStatus">TensorFlow.js loading…</div>
+    <div id="trainProgress"></div>
+    <div id="trainChart" title="Fitness trend (each character = one generation)"></div>
+    <div class="btn-group">
+      <button id="btnTrain">▶ Start Training</button>
+      <button id="btnStopTrain">⏹ Stop</button>
+      <button id="btnResetTrain">✕ Reset Weights</button>
+    </div>
+    <p style="font-size:0.68rem;color:#7f8c8d;margin-top:8px;line-height:1.5">
+      8 neural agents self-play in parallel web workers and evolve each generation.<br>
+      The best model is saved automatically and used as the game AI.<br>
+      👁 Watch AI shows the trained model in action.
+    </p>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">How to Play</div>
+    <div class="key-desc">
+      You are <strong>Olive</strong>. <strong>Forest</strong> is the AI opponent.<br>
+      🧠 = neural model active &nbsp; 🤖 = heuristic fallback.<br>
+      Click a unit to select it.<br>
+      <span style="color:#64c8ff">■</span> Blue = free reposition (unit stays ready).<br>
+      <span style="color:#ffd200">■</span> Gold = action (capture / merge / clear).<br>
+      Units move freely within territory.<br>
+      Only captures &amp; merges consume the move.<br>
+      Merge units by strength: levels add up (max 4).<br>
+      P = Peasant, S = Spearman<br>
+      K = Knight, B = Baron<br>
+      🏠 = Hut (str 1) &nbsp; 🏰 = Tower (str 2)<br>
+      Strength must be <em>greater</em> to capture.<br>
+      Pay upkeep or units die (→ gravestones).<br>
+      <span style="color:#00dc64">■</span> Green = place unit here.<br>
+      <span style="color:#b4dc00">■</span> Yellow-green = clears the tree.<br>
+      <span style="color:#00b4dc">■</span> Teal = merge with existing unit.<br>
+      <span style="color:#ff8c00">■</span> Orange = parachute to undefended hex.<br>
+      Buy any unit directly: Peasant 5g, Spearman 10g, Knight 15g, Baron 20g.
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script type="module" src="src/game.js"></script>
+<script>
+  // Register the Service Worker for offline / PWA support
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('./sw.js').catch(function (err) {
+        console.warn('[SW] registration failed:', err)
+      })
+    })
+  }
+</script>
+
+</body>
+</html>
