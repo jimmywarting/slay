@@ -584,7 +584,8 @@ function updateUI(state) {
 
   // Button states
   const notOver = !state.gameOver
-  const humanTurn = notOver && !isAIPlayer(state, state.activePlayer)
+  const localTurn = !p2pActive || state.activePlayer === p2pLocalIndex
+  const humanTurn = notOver && !isAIPlayer(state, state.activePlayer) && localTurn
 
   // Enable/disable each buy button based on whether the player can afford that unit
   const BUY_BTN_IDS = ['btnBuyPeasant', 'btnBuySpearman', 'btnBuyKnight', 'btnBuyBaron']
